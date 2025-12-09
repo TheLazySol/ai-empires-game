@@ -1,32 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Application, Graphics, Container, Text } from "pixi.js";
+import { Application, Graphics, Container, Text, Sprite, Texture } from "pixi.js";
 import { useAtomValue } from "jotai";
 import { mapDataAtom, mapViewAtom, settlementsAtom, playerAtom } from "@/store/gameState";
-import { MapView, TerrainType, VoronoiCell } from "@/types/game";
+import { MapView, VoronoiCell, MapMetadata } from "@/types/game";
 import { RESOURCE_METADATA } from "@/types/resources";
+import { TileLoader, Viewport, LoadedTile } from "@/lib/tileLoader";
 
 interface MapCanvasProps {
   onCellClick?: (cell: VoronoiCell, event: MouseEvent) => void;
   onCellRightClick?: (cell: VoronoiCell, event: MouseEvent) => void;
 }
 
+const TILE_SIZE = 512;
+const ZOOM_MULTIPLIERS = [1, 2, 4, 8, 16];
+
 export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
-  const cellsContainerRef = useRef<Container | null>(null);
+  const tilesContainerRef = useRef<Container | null>(null);
+  const interactivityContainerRef = useRef<Container | null>(null);
+  const tooltipRef = useRef<Text | null>(null);
+  const tooltipContainerRef = useRef<Container | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
+  const tileLoaderRef = useRef<TileLoader | null>(null);
+  const tileSpritesRef = useRef<Map<string, Sprite>>(new Map());
+  const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastRenderParamsRef = useRef<{ scale: number; position: { x: number; y: number }; mapView: MapView } | null>(null);
 
   const mapData = useAtomValue(mapDataAtom);
   const mapView = useAtomValue(mapViewAtom);
   const settlements = useAtomValue(settlementsAtom);
   const player = useAtomValue(playerAtom);
 
+  // Initialize PixiJS
   useEffect(() => {
     if (!canvasRef.current || !mapData) return;
 
@@ -44,7 +56,6 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
           autoDensity: true,
         });
 
-        // Check if component is still mounted
         if (!isMounted || !canvasRef.current) {
           app.destroy(true, { children: true });
           return;
@@ -52,31 +63,84 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
 
         canvasRef.current.appendChild(app.canvas);
 
-        // Ensure stage exists
         if (!app.stage) {
           console.error("PixiJS stage not available");
           app.destroy(true, { children: true });
           return;
         }
 
-        const cellsContainer = new Container();
-        app.stage.addChild(cellsContainer);
+        // Create containers
+        const tilesContainer = new Container();
+        app.stage.addChild(tilesContainer);
+        tilesContainerRef.current = tilesContainer;
+
+        const interactivityContainer = new Container();
+        app.stage.addChild(interactivityContainer);
+        interactivityContainerRef.current = interactivityContainer;
+
+        // Create tooltip container
+        const tooltipContainer = new Container();
+        tooltipContainer.visible = false;
+        app.stage.addChild(tooltipContainer);
+        tooltipContainerRef.current = tooltipContainer;
+
+        const tooltipBackground = new Graphics();
+        tooltipContainer.addChild(tooltipBackground);
+
+        const tooltip = new Text({
+          text: "",
+          style: {
+            fontSize: 14,
+            fill: 0x000000,
+            fontWeight: "bold",
+          },
+        });
+        tooltip.anchor.set(0.5);
+        tooltipContainer.addChild(tooltip);
+        tooltipRef.current = tooltip;
+
+        const updateTooltipBackground = () => {
+          if (!tooltip.text) return;
+          const padding = 8;
+          const width = tooltip.width + padding * 2;
+          const height = tooltip.height + padding * 2;
+          tooltipBackground.clear();
+          tooltipBackground.roundRect(-width / 2, -height / 2, width, height, 4);
+          tooltipBackground.fill({ color: 0xffffff, alpha: 0.95 });
+          tooltipBackground.stroke({ color: 0xcccccc, width: 1 });
+        };
+        (tooltipContainer as any).updateBackground = updateTooltipBackground;
+
+        // Initialize tile loader
+        const tileLoader = new TileLoader(
+          mapData.id,
+          mapData.width,
+          mapData.height,
+          (tile: LoadedTile) => {
+            // Tile loaded callback
+            if (!tilesContainerRef.current || !tile.image) return;
+            renderTile(tile);
+          },
+          (tile: LoadedTile) => {
+            console.error("Failed to load tile:", tile.url);
+          }
+        );
+        tileLoaderRef.current = tileLoader;
 
         // Center the map initially
         const initialX = (window.innerWidth - mapData.width) / 2;
         const initialY = (window.innerHeight - mapData.height) / 2;
-        cellsContainer.x = initialX;
-        cellsContainer.y = initialY;
+        tilesContainer.x = initialX;
+        tilesContainer.y = initialY;
+        interactivityContainer.x = initialX;
+        interactivityContainer.y = initialY;
         setPosition({ x: initialX, y: initialY });
 
         appRef.current = app;
-        cellsContainerRef.current = cellsContainer;
-
         setIsReady(true);
       } catch (error) {
         console.error("Error initializing PixiJS:", error);
         if (!isMounted) return;
-        // Clean up on error
         if (appRef.current) {
           appRef.current.destroy(true, { children: true });
           appRef.current = null;
@@ -88,21 +152,69 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
 
     return () => {
       isMounted = false;
+      if (tileLoaderRef.current) {
+        tileLoaderRef.current.destroy();
+        tileLoaderRef.current = null;
+      }
       if (appRef.current) {
         appRef.current.destroy(true, { children: true });
         appRef.current = null;
       }
-      if (cellsContainerRef.current) {
-        cellsContainerRef.current = null;
+      if (tilesContainerRef.current) {
+        tilesContainerRef.current = null;
+      }
+      if (interactivityContainerRef.current) {
+        interactivityContainerRef.current = null;
+      }
+      if (tooltipRef.current) {
+        tooltipRef.current = null;
+      }
+      if (tooltipContainerRef.current) {
+        tooltipContainerRef.current = null;
+      }
+      tileSpritesRef.current.clear();
+      if (renderTimeoutRef.current) {
+        clearTimeout(renderTimeoutRef.current);
       }
     };
   }, [mapData]);
 
+  // Render a tile sprite
+  const renderTile = (tile: LoadedTile) => {
+    if (!tilesContainerRef.current || !tile.image || !appRef.current) return;
+
+    const key = `${tile.coordinate.zoom}-${tile.coordinate.x}-${tile.coordinate.y}-${tile.viewMode}`;
+
+    // Check if sprite already exists
+    if (tileSpritesRef.current.has(key)) {
+      return;
+    }
+
+    try {
+      const texture = Texture.from(tile.image);
+      const sprite = new Sprite(texture);
+
+      // Calculate tile position in world coordinates
+      const multiplier = ZOOM_MULTIPLIERS[tile.coordinate.zoom];
+      const worldTileSize = TILE_SIZE * multiplier;
+      sprite.x = tile.coordinate.x * worldTileSize;
+      sprite.y = tile.coordinate.y * worldTileSize;
+      sprite.width = worldTileSize;
+      sprite.height = worldTileSize;
+
+      tilesContainerRef.current.addChild(sprite);
+      tileSpritesRef.current.set(key, sprite);
+    } catch (error) {
+      console.error("Error rendering tile:", error);
+    }
+  };
+
   // Handle pan and zoom
   useEffect(() => {
-    if (!isReady || !cellsContainerRef.current) return;
+    if (!isReady || !tilesContainerRef.current || !interactivityContainerRef.current) return;
 
-    const container = cellsContainerRef.current;
+    const tilesContainer = tilesContainerRef.current;
+    const interactivityContainer = interactivityContainerRef.current;
     const canvas = canvasRef.current?.querySelector("canvas");
 
     const handleWheel = (e: WheelEvent) => {
@@ -110,25 +222,24 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
       const newScale = Math.max(0.25, Math.min(5, scale * delta));
       setScale(newScale);
-      
-      // Zoom towards mouse position
+
       if (canvas) {
         const rect = canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
-        
+
         const worldX = (mouseX - position.x) / scale;
         const worldY = (mouseY - position.y) / scale;
-        
+
         const newX = mouseX - worldX * newScale;
         const newY = mouseY - worldY * newScale;
-        
+
         setPosition({ x: newX, y: newY });
       }
     };
 
     const handleMouseDown = (e: MouseEvent) => {
-      if (e.button === 0) { // Left click
+      if (e.button === 0) {
         isDraggingRef.current = true;
         dragStartRef.current = {
           x: e.clientX - position.x,
@@ -167,136 +278,138 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
     };
   }, [isReady, scale, position]);
 
-  // Update container transform
+  // Update container transforms
   useEffect(() => {
-    if (cellsContainerRef.current && cellsContainerRef.current.parent) {
-      cellsContainerRef.current.scale.set(scale);
-      cellsContainerRef.current.x = position.x;
-      cellsContainerRef.current.y = position.y;
+    if (tilesContainerRef.current && tilesContainerRef.current.parent) {
+      tilesContainerRef.current.scale.set(scale);
+      tilesContainerRef.current.x = position.x;
+      tilesContainerRef.current.y = position.y;
+    }
+    if (interactivityContainerRef.current && interactivityContainerRef.current.parent) {
+      interactivityContainerRef.current.scale.set(scale);
+      interactivityContainerRef.current.x = position.x;
+      interactivityContainerRef.current.y = position.y;
     }
   }, [scale, position]);
 
-  // Render cells
+  // Update tiles based on viewport
   useEffect(() => {
-    if (!isReady || !mapData || !cellsContainerRef.current || !appRef.current) return;
+    if (!isReady || !mapData || !tileLoaderRef.current) return;
 
-    const container = cellsContainerRef.current;
-    // Ensure container is still part of the stage
-    if (!container.parent) return;
-    
-    container.removeChildren();
+    const currentParams = { scale, position, mapView };
+    const lastParams = lastRenderParamsRef.current;
+    const needsUpdate =
+      !lastParams ||
+      lastParams.mapView !== mapView ||
+      Math.abs(lastParams.scale - scale) > 0.1 ||
+      Math.abs(lastParams.position.x - position.x) > 50 ||
+      Math.abs(lastParams.position.y - position.y) > 50;
 
-    mapData.cells.forEach((cell) => {
-      const graphics = new Graphics();
+    if (!needsUpdate && lastParams) {
+      return;
+    }
 
-      // Determine fill color based on view mode
-      let fillColor = 0xffffff;
-      let alpha = 1;
+    lastRenderParamsRef.current = currentParams;
 
-      if (mapView === MapView.Terrain) {
-        fillColor = cell.terrain === TerrainType.Water ? 0x3498db : 0xffffff;
-      } else if (mapView === MapView.Political) {
-        // Find owner of this cell - check if any settlement owns it
-        // For now, we'll use a simple check - in future this will use territories table
-        const ownerSettlement = settlements.find((s) => s.cellId === cell.id);
-        if (ownerSettlement && player) {
-          // Parse hex color
-          const colorHex = player.color.replace("#", "");
-          fillColor = parseInt(colorHex, 16) || 0x9b59b6;
-        } else {
-          fillColor = cell.terrain === TerrainType.Water ? 0x3498db : 0xffffff;
-        }
-      } else if (mapView === MapView.Resources) {
-        fillColor = cell.terrain === TerrainType.Water ? 0x3498db : 0xffffff;
-        if (cell.resource) {
-          const resourceMeta = RESOURCE_METADATA[cell.resource];
-          const tint = parseInt(resourceMeta.color.replace("#", ""), 16);
-          fillColor = tint;
-          alpha = 0.3;
-        }
+    if (renderTimeoutRef.current) {
+      clearTimeout(renderTimeoutRef.current);
+    }
+
+    const delay = isDraggingRef.current ? 100 : 16;
+    renderTimeoutRef.current = setTimeout(() => {
+      if (!mapData || !tileLoaderRef.current) return;
+
+      // Calculate viewport
+      const viewport: Viewport = {
+        x: -position.x / scale,
+        y: -position.y / scale,
+        width: window.innerWidth / scale,
+        height: window.innerHeight / scale,
+      };
+
+      // Update tile loader
+      tileLoaderRef.current.updateViewport(viewport, scale, mapView, true);
+
+      // Clean up tiles outside viewport
+      cleanupTiles(viewport, scale);
+    }, delay);
+
+    return () => {
+      if (renderTimeoutRef.current) {
+        clearTimeout(renderTimeoutRef.current);
       }
+    };
+  }, [isReady, mapData, mapView, scale, position]);
 
-      // Draw polygon
-      if (cell.polygon && cell.polygon.length > 0) {
-        graphics.poly(cell.polygon.flat());
-        graphics.fill({ color: fillColor, alpha });
-        graphics.stroke({ color: 0xcccccc, width: 0.5 });
-      }
+  // Clean up tiles outside viewport
+  const cleanupTiles = (viewport: Viewport, currentScale: number) => {
+    if (!tilesContainerRef.current) return;
 
-      // Add click handlers
-      graphics.eventMode = "static";
-      graphics.cursor = "pointer";
-      graphics.on("pointerdown", (event) => {
-        // Don't handle clicks if we're dragging
-        if (isDraggingRef.current) return;
-        
-        const originalEvent = event.data.originalEvent;
-        if (!originalEvent) {
-          return;
-        }
-        
-        // Convert through unknown first, then check if it's a MouseEvent
-        const nativeEvent = originalEvent as unknown as MouseEvent | PointerEvent | TouchEvent;
-        if (!(nativeEvent instanceof MouseEvent)) {
-          return;
-        }
-        if (nativeEvent.button === 2) {
-          // Right click
-          event.stopPropagation();
-          onCellRightClick?.(cell, nativeEvent);
-        } else if (nativeEvent.button === 0) {
-          // Left click - only if not starting a drag
-          const startX = nativeEvent.clientX;
-          const startY = nativeEvent.clientY;
-          
-          const handleMouseUp = () => {
-            const endX = nativeEvent.clientX;
-            const endY = nativeEvent.clientY;
-            const dist = Math.sqrt(
-              Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2)
-            );
-            
-            // Only trigger click if we didn't drag much
-            if (dist < 5) {
-              onCellClick?.(cell, nativeEvent);
-            }
-            
-            window.removeEventListener("mouseup", handleMouseUp);
-          };
-          
-          window.addEventListener("mouseup", handleMouseUp);
-        }
-      });
+    const padding = TILE_SIZE * 2; // Keep tiles slightly outside viewport
+    const expandedViewport = {
+      x: viewport.x - padding,
+      y: viewport.y - padding,
+      width: viewport.width + padding * 2,
+      height: viewport.height + padding * 2,
+    };
 
-      container.addChild(graphics);
+    const tilesToRemove: string[] = [];
 
-      // Add resource icons in Resources view
-      if (mapView === MapView.Resources && cell.resource && cell.terrain === TerrainType.Land) {
-        const resourceMeta = RESOURCE_METADATA[cell.resource];
-        const [x, y] = cell.site;
+    tileSpritesRef.current.forEach((sprite, key) => {
+      const [zoomStr, xStr, yStr] = key.split("-");
+      const zoom = parseInt(zoomStr);
+      const x = parseInt(xStr);
+      const y = parseInt(yStr);
 
-        // Create text sprite for resource icon (simplified - using text for now)
-        const text = new Text({
-          text: resourceMeta.name.charAt(0),
-          style: {
-            fontSize: 12,
-            fill: resourceMeta.color,
-            fontWeight: "bold",
-          },
-        });
-        text.anchor.set(0.5);
-        text.x = x;
-        text.y = y;
-        container.addChild(text);
+      const multiplier = ZOOM_MULTIPLIERS[zoom];
+      const worldTileSize = TILE_SIZE * multiplier;
+      const tileWorldX = x * worldTileSize;
+      const tileWorldY = y * worldTileSize;
+
+      const isVisible =
+        tileWorldX + worldTileSize >= expandedViewport.x &&
+        tileWorldX <= expandedViewport.x + expandedViewport.width &&
+        tileWorldY + worldTileSize >= expandedViewport.y &&
+        tileWorldY <= expandedViewport.y + expandedViewport.height;
+
+      // Also remove tiles from different zoom levels that are too far off
+      const currentZoom = scaleToZoomLevel(currentScale);
+      const zoomDiff = Math.abs(zoom - currentZoom);
+
+      if (!isVisible || zoomDiff > 1) {
+        tilesToRemove.push(key);
       }
     });
 
-    // Render settlements
+    tilesToRemove.forEach((key) => {
+      const sprite = tileSpritesRef.current.get(key);
+      if (sprite && tilesContainerRef.current) {
+        tilesContainerRef.current.removeChild(sprite);
+        sprite.destroy();
+        tileSpritesRef.current.delete(key);
+      }
+    });
+  };
+
+  const scaleToZoomLevel = (scale: number): number => {
+    if (scale < 0.5) return 0;
+    if (scale < 1) return 1;
+    if (scale < 2) return 2;
+    if (scale < 4) return 3;
+    return 4;
+  };
+
+  // Render settlements overlay
+  useEffect(() => {
+    if (!isReady || !interactivityContainerRef.current || !mapData) return;
+
+    const container = interactivityContainerRef.current;
+    container.removeChildren();
+
     settlements.forEach((settlement) => {
       const [x, y] = settlement.position;
       const settlementGraphics = new Graphics();
 
-      // Draw star shape
       const points: number[] = [];
       const outerRadius = 8;
       const innerRadius = 4;
@@ -309,19 +422,20 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
       }
 
       settlementGraphics.poly(points);
-      
-      // Get settlement owner color
+
       const settlementPlayer = player?.id === settlement.playerId ? player : null;
-      const color = settlementPlayer?.color 
-        ? parseInt(settlementPlayer.color.replace("#", ""), 16) 
-        : 0x9b59b6; // Default purple
-      
+      const color = settlementPlayer?.color
+        ? parseInt(settlementPlayer.color.replace("#", ""), 16)
+        : 0x9b59b6;
+
       settlementGraphics.fill({ color, alpha: 1 });
       settlementGraphics.stroke({ color: 0x000000, width: 1 });
+      settlementGraphics.eventMode = "static";
+      settlementGraphics.cursor = "pointer";
 
       container.addChild(settlementGraphics);
     });
-  }, [isReady, mapData, mapView, settlements, player, onCellClick, onCellRightClick]);
+  }, [isReady, settlements, player, mapData]);
 
   // Handle window resize
   useEffect(() => {
@@ -335,7 +449,7 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Prevent context menu on right click
+  // Prevent context menu
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -358,4 +472,3 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
 
   return <div ref={canvasRef} className="h-screen w-screen" />;
 }
-

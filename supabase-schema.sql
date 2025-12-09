@@ -43,22 +43,56 @@ CREATE TABLE IF NOT EXISTS territories (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Map tiles table - stores pre-rendered map tiles
+CREATE TABLE IF NOT EXISTS map_tiles (
+  id TEXT PRIMARY KEY,
+  map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+  zoom_level INTEGER NOT NULL CHECK (zoom_level >= 0 AND zoom_level <= 4),
+  tile_x INTEGER NOT NULL,
+  tile_y INTEGER NOT NULL,
+  view_mode TEXT NOT NULL CHECK (view_mode IN ('terrain', 'political', 'resources')),
+  tile_data BYTEA NOT NULL, -- PNG image data
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(map_id, zoom_level, tile_x, tile_y, view_mode)
+);
+
+-- Tile cache invalidation table - tracks tiles that need regeneration
+CREATE TABLE IF NOT EXISTS tile_cache_invalidation (
+  id TEXT PRIMARY KEY,
+  map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+  tile_x INTEGER NOT NULL,
+  tile_y INTEGER NOT NULL,
+  zoom_level INTEGER NOT NULL CHECK (zoom_level >= 0 AND zoom_level <= 4),
+  view_mode TEXT NOT NULL CHECK (view_mode IN ('terrain', 'political', 'resources')),
+  reason TEXT NOT NULL CHECK (reason IN ('territory-change', 'settlement-change', 'resource-change')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_settlements_player_id ON settlements(player_id);
 CREATE INDEX IF NOT EXISTS idx_settlements_cell_id ON settlements(cell_id);
 CREATE INDEX IF NOT EXISTS idx_territories_player_id ON territories(player_id);
 CREATE INDEX IF NOT EXISTS idx_territories_cell_id ON territories(cell_id);
 CREATE INDEX IF NOT EXISTS idx_players_guest_id ON players(guest_id);
+CREATE INDEX IF NOT EXISTS idx_map_tiles_map_id ON map_tiles(map_id);
+CREATE INDEX IF NOT EXISTS idx_map_tiles_coords ON map_tiles(map_id, zoom_level, tile_x, tile_y, view_mode);
+CREATE INDEX IF NOT EXISTS idx_tile_invalidation_map_id ON tile_cache_invalidation(map_id);
+CREATE INDEX IF NOT EXISTS idx_tile_invalidation_coords ON tile_cache_invalidation(map_id, zoom_level, tile_x, tile_y, view_mode);
 
 -- Enable Row Level Security (RLS) - adjust policies as needed
 ALTER TABLE maps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE players ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settlements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE territories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE map_tiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tile_cache_invalidation ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Allow all operations for now (adjust for production)
 CREATE POLICY "Allow all operations on maps" ON maps FOR ALL USING (true);
 CREATE POLICY "Allow all operations on players" ON players FOR ALL USING (true);
 CREATE POLICY "Allow all operations on settlements" ON settlements FOR ALL USING (true);
 CREATE POLICY "Allow all operations on territories" ON territories FOR ALL USING (true);
+CREATE POLICY "Allow all operations on map_tiles" ON map_tiles FOR ALL USING (true);
+CREATE POLICY "Allow all operations on tile_cache_invalidation" ON tile_cache_invalidation FOR ALL USING (true);
 

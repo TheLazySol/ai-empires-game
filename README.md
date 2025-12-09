@@ -4,7 +4,10 @@ A multiplayer, web-based grand strategy game where players fight for land resour
 
 ## Features
 
-- **Interactive Voronoi-based Map**: Procedurally generated 200x200 tile map with zoom, pan, and multiple view modes
+- **Interactive Voronoi-based Map**: Procedurally generated map (configurable size) with zoom, pan, and multiple view modes
+  - Multiple continents with unique shapes
+  - Scattered islands
+  - Organic coastlines with configurable variance
 - **Three Map Views**: 
   - Terrain: Base map with white land and blue water
   - Political: Shows player territories with distinct colors
@@ -95,6 +98,18 @@ To create a new map (this will clear all settlements and territories):
 ```bash
 pnpm run regenerate-map [optional-seed]
 ```
+
+## Map Configuration
+
+You can customize the map generation by editing `src/constants.ts`:
+
+- **MAP_WIDTH / MAP_HEIGHT**: Map dimensions in pixels
+- **CELL_DENSITY_DIVISOR**: Controls cell size (higher = more cells, smaller cells)
+- **NUMBER_OF_CONTINENTS**: How many major continents to generate (1-5 recommended)
+- **NUMBER_OF_ISLANDS**: How many small islands to scatter (0-20 recommended)
+- **LAND_VARIANCE**: Coastline roughness (0.1-1.5, where 0.6 is recommended for natural look)
+
+After changing these values, regenerate the map to see the changes.
 
 ## Project Structure
 

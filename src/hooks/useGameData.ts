@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useSetAtom, useAtomValue } from "jotai";
 import { mapDataAtom, settlementsAtom, playerAtom } from "@/store/gameState";
-import { MapData, Settlement, Player } from "@/types/game";
+import { MapData, MapMetadata, Settlement, Player } from "@/types/game";
 
 export function useGameData() {
   const setMapData = useSetAtom(mapDataAtom);
@@ -12,18 +12,29 @@ export function useGameData() {
   const player = useAtomValue(playerAtom);
 
   useEffect(() => {
-    // Load map data
-    const loadMap = async () => {
+    // Load map metadata only (not full map data with cells)
+    const loadMapMetadata = async () => {
       try {
-        const response = await fetch("/api/map/current");
+        const response = await fetch("/api/map/metadata");
         if (response.ok) {
           const { map } = await response.json();
           if (map) {
-            setMapData(map);
+            // Convert MapMetadata to MapData format (without cells)
+            // MapCanvas expects MapData but only uses id, width, height
+            const mapData: MapData = {
+              id: map.id,
+              seed: map.seed,
+              width: map.width,
+              height: map.height,
+              cells: [], // Empty - tiles will be loaded instead
+              createdAt: map.createdAt,
+              updatedAt: map.updatedAt,
+            };
+            setMapData(mapData);
           }
         }
       } catch (error) {
-        console.error("Error loading map:", error);
+        console.error("Error loading map metadata:", error);
       }
     };
 
@@ -58,7 +69,7 @@ export function useGameData() {
       }
     };
 
-    loadMap();
+    loadMapMetadata();
     loadSettlements();
     loadPlayer();
 

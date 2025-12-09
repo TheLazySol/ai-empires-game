@@ -1,20 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateMap } from "@/lib/mapGeneration";
 import { supabase } from "@/lib/supabase";
+import { 
+  MAP_WIDTH, 
+  MAP_HEIGHT, 
+  CELL_DENSITY_DIVISOR,
+  NUMBER_OF_CONTINENTS,
+  NUMBER_OF_ISLANDS,
+  LAND_VARIANCE
+} from "@/constants";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const seed = body.seed || `seed-${Date.now()}`;
-    const width = body.width || 200;
-    const height = body.height || 200;
+    const width = body.width || MAP_WIDTH;
+    const height = body.height || MAP_HEIGHT;
+    const cellDensityDivisor = body.cellDensityDivisor || CELL_DENSITY_DIVISOR;
+    const numContinents = body.numContinents || NUMBER_OF_CONTINENTS;
+    const numIslands = body.numIslands || NUMBER_OF_ISLANDS;
+    const landVariance = body.landVariance || LAND_VARIANCE;
 
-    console.log(`Generating map with seed: ${seed}, size: ${width}x${height}`);
+    console.log(`Generating map with seed: ${seed}`);
+    console.log(`Size: ${width}x${height}`);
+    console.log(`Cell density: ${cellDensityDivisor}`);
+    console.log(`Continents: ${numContinents}, Islands: ${numIslands}, Variance: ${landVariance}`);
 
     // Generate the map
     let mapData;
     try {
-      mapData = generateMap(seed, width, height);
+      mapData = generateMap(seed, width, height, cellDensityDivisor, numContinents, numIslands, landVariance);
       console.log(`Map generated: ${mapData.cells.length} cells`);
     } catch (genError) {
       console.error("Error in map generation:", genError);
@@ -67,6 +82,19 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("Map saved successfully:", data.id);
+    
+    // Trigger tile generation asynchronously (don't wait for it)
+    fetch(`${process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"}/api/map/tiles/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mapId: mapData.id }),
+    }).catch((error) => {
+      console.error("Error triggering tile generation:", error);
+      // Don't fail the request if tile generation fails
+    });
+    
     return NextResponse.json({ map: mapData });
   } catch (error) {
     console.error("Unexpected error in map generation API:", error);

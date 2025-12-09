@@ -26,7 +26,9 @@ export default function MapViewSelector() {
           onClick={() => setMapView(view.value)}
           className={cn(
             "px-4 py-2",
-            mapView === view.value && "bg-gray-900 text-white"
+            mapView === view.value 
+              ? "bg-gray-900 text-white" 
+              : "text-black"
           )}
         >
           {view.label}

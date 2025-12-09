@@ -58,3 +58,38 @@ export interface Territory {
   createdAt: string;
 }
 
+export interface TileCoordinate {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface MapTile {
+  id: string;
+  mapId: string;
+  zoomLevel: number;
+  tileX: number;
+  tileY: number;
+  viewMode: MapView;
+  tileData: Uint8Array; // PNG image data
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TileRequest {
+  mapId: string;
+  zoom: number;
+  x: number;
+  y: number;
+  view: MapView;
+}
+
+export interface MapMetadata {
+  id: string;
+  seed: string;
+  width: number;
+  height: number;
+  createdAt: string;
+  updatedAt: string;
+}
+

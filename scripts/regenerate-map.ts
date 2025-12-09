@@ -14,6 +14,14 @@
 import { generateMap } from "../src/lib/mapGeneration";
 import { createClient } from "@supabase/supabase-js";
 import * as dotenv from "dotenv";
+import { 
+  MAP_WIDTH, 
+  MAP_HEIGHT, 
+  CELL_DENSITY_DIVISOR,
+  NUMBER_OF_CONTINENTS,
+  NUMBER_OF_ISLANDS,
+  LAND_VARIANCE
+} from "../src/constants";
 
 // Load environment variables from .env.local
 dotenv.config({ path: ".env.local" });
@@ -33,16 +41,24 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 async function regenerateMap(seed?: string) {
   const seedValue = seed || `seed-${Date.now()}`;
-  const width = 200;
-  const height = 200;
+  const width = MAP_WIDTH;
+  const height = MAP_HEIGHT;
+  const cellDensityDivisor = CELL_DENSITY_DIVISOR;
+  const numContinents = NUMBER_OF_CONTINENTS;
+  const numIslands = NUMBER_OF_ISLANDS;
+  const landVariance = LAND_VARIANCE;
   
-  console.log(`Generating new map with seed: ${seedValue}`);
-  console.log(`Size: ${width}x${height}`);
+  console.log(`🗺️  Generating new map with seed: ${seedValue}`);
+  console.log(`📏 Size: ${width}x${height}`);
+  console.log(`🔢 Cell density divisor: ${cellDensityDivisor} (higher = smaller cells)`);
+  console.log(`🌍 Continents: ${numContinents}`);
+  console.log(`🏝️  Islands: ${numIslands}`);
+  console.log(`🌊 Land variance: ${landVariance}`);
 
   try {
     // Generate the map
-    console.log("Generating map data...");
-    const mapData = generateMap(seedValue, width, height);
+    console.log("\n⚙️  Generating map data...");
+    const mapData = generateMap(seedValue, width, height, cellDensityDivisor, numContinents, numIslands, landVariance);
     console.log(`Map generated: ${mapData.cells.length} cells`);
 
     // Clear existing map data
@@ -87,6 +103,7 @@ async function regenerateMap(seed?: string) {
     console.error("❌ Error generating map:");
     if (error instanceof Error) {
       console.error("Message:", error.message);
+      console.error("Stack:", error.stack);
       if (error.cause) {
         console.error("Cause:", error.cause);
       }

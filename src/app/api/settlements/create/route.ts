@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { Settlement } from "@/types/game";
+import { invalidateSettlementTiles } from "@/lib/tileCache";
 
 export async function POST(request: NextRequest) {
   try {
@@ -71,6 +72,25 @@ export async function POST(request: NextRequest) {
       population: data.population,
       createdAt: data.created_at,
     };
+
+    // Invalidate tiles around the settlement
+    // Get map ID from the current map
+    try {
+      const { data: mapData } = await supabase
+        .from("maps")
+        .select("id")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (mapData) {
+        const [x, y] = data.position;
+        await invalidateSettlementTiles(mapData.id, data.cell_id, x, y);
+      }
+    } catch (error) {
+      console.error("Error invalidating tiles:", error);
+      // Don't fail the request if tile invalidation fails
+    }
 
     return NextResponse.json({ settlement: createdSettlement });
   } catch (error) {

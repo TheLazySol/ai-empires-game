@@ -50,7 +50,7 @@ export default function OverviewTab() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <Label htmlFor="nation-name">Nation Name</Label>
+        <Label htmlFor="nation-name" className="text-black">Nation Name</Label>
         <Input
           id="nation-name"
           value={nationName}
@@ -63,12 +63,12 @@ export default function OverviewTab() {
 
       <div className="grid grid-cols-2 gap-4 max-w-md">
         <div className="space-y-1">
-          <Label className="text-sm text-gray-500">Population</Label>
-          <p className="text-2xl font-semibold">{population.toLocaleString()}</p>
+          <Label className="text-sm text-black">Population</Label>
+          <p className="text-2xl font-semibold text-black">{population.toLocaleString()}</p>
         </div>
         <div className="space-y-1">
-          <Label className="text-sm text-gray-500">Territory</Label>
-          <p className="text-2xl font-semibold">{territoryCount} tiles</p>
+          <Label className="text-sm text-black">Territory</Label>
+          <p className="text-2xl font-semibold text-black">{territoryCount} tiles</p>
         </div>
       </div>
     </div>
