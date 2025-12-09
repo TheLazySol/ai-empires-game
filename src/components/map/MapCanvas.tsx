@@ -4,23 +4,26 @@ import { useEffect, useRef, useState } from "react";
 import { Application, Graphics, Container, Text, Sprite, Texture } from "pixi.js";
 import { useAtomValue } from "jotai";
 import { mapDataAtom, mapViewAtom, settlementsAtom, playerAtom } from "@/store/gameState";
-import { MapView, VoronoiCell, MapMetadata } from "@/types/game";
+import { MapView, VoronoiCell, MapMetadata, MapData, Territory, Player as GamePlayer } from "@/types/game";
 import { RESOURCE_METADATA } from "@/types/resources";
 import { TileLoader, Viewport, LoadedTile } from "@/lib/tileLoader";
+import { getTileSize } from "@/lib/tileGeneration";
 
 interface MapCanvasProps {
   onCellClick?: (cell: VoronoiCell, event: MouseEvent) => void;
   onCellRightClick?: (cell: VoronoiCell, event: MouseEvent) => void;
+  onLoadingProgress?: (loaded: number, total: number, currentZoom: number, isComplete: boolean) => void;
 }
 
-const TILE_SIZE = 512;
 const ZOOM_MULTIPLIERS = [1, 2, 4, 8, 16];
 
-export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasProps) {
+export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProgress }: MapCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const tilesContainerRef = useRef<Container | null>(null);
   const interactivityContainerRef = useRef<Container | null>(null);
+  const cellsContainerRef = useRef<Container | null>(null);
+  const hoverOverlayRef = useRef<Container | null>(null);
   const tooltipRef = useRef<Text | null>(null);
   const tooltipContainerRef = useRef<Container | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -30,13 +33,56 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
   const dragStartRef = useRef({ x: 0, y: 0 });
   const tileLoaderRef = useRef<TileLoader | null>(null);
   const tileSpritesRef = useRef<Map<string, Sprite>>(new Map());
+  const cellGraphicsRef = useRef<Map<string, Graphics>>(new Map());
+  const hoveredCellRef = useRef<VoronoiCell | null>(null);
   const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastRenderParamsRef = useRef<{ scale: number; position: { x: number; y: number }; mapView: MapView } | null>(null);
+  
+  // Full map data with cells
+  const [fullMapData, setFullMapData] = useState<MapData | null>(null);
+  const [territories, setTerritories] = useState<Territory[]>([]);
+  const [allPlayers, setAllPlayers] = useState<GamePlayer[]>([]);
 
   const mapData = useAtomValue(mapDataAtom);
   const mapView = useAtomValue(mapViewAtom);
   const settlements = useAtomValue(settlementsAtom);
   const player = useAtomValue(playerAtom);
+
+  // Load full map data with cells, territories, and players
+  useEffect(() => {
+    if (!mapData) return;
+
+    const loadFullMapData = async () => {
+      try {
+        // Load full map with cells
+        const mapResponse = await fetch("/api/map/current");
+        if (mapResponse.ok) {
+          const { map } = await mapResponse.json();
+          if (map && map.cells) {
+            setFullMapData(map);
+          }
+        }
+
+        // Load territories
+        const territoriesResponse = await fetch("/api/territories");
+        if (territoriesResponse.ok) {
+          const { territories: territoriesData } = await territoriesResponse.json();
+          setTerritories(territoriesData || []);
+        }
+
+        // Load all players
+        const playersResponse = await fetch("/api/players");
+        if (playersResponse.ok) {
+          const { players: playersData } = await playersResponse.json();
+          setAllPlayers(playersData || []);
+        }
+      } catch (error) {
+        console.error("Error loading full map data:", error);
+      }
+    };
+
+    loadFullMapData();
+  }, [mapData]);
 
   // Initialize PixiJS
   useEffect(() => {
@@ -52,8 +98,9 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
           height: window.innerHeight,
           backgroundColor: 0xf5f5f5,
           antialias: true,
-          resolution: window.devicePixelRatio || 1,
+          resolution: Math.max(window.devicePixelRatio || 1, 1),
           autoDensity: true,
+          roundPixels: false, // Enable sub-pixel rendering for smoother visuals
         });
 
         if (!isMounted || !canvasRef.current) {
@@ -77,6 +124,20 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
         const interactivityContainer = new Container();
         app.stage.addChild(interactivityContainer);
         interactivityContainerRef.current = interactivityContainer;
+
+        // Create cells container for hitboxes (invisible but interactive)
+        const cellsContainer = new Container();
+        cellsContainer.eventMode = "static";
+        cellsContainer.interactiveChildren = true;
+        app.stage.addChild(cellsContainer);
+        cellsContainerRef.current = cellsContainer;
+
+        // Create hover overlay container
+        const hoverOverlay = new Container();
+        hoverOverlay.eventMode = "none";
+        hoverOverlay.interactiveChildren = false;
+        app.stage.addChild(hoverOverlay);
+        hoverOverlayRef.current = hoverOverlay;
 
         // Create tooltip container
         const tooltipContainer = new Container();
@@ -111,7 +172,7 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
         };
         (tooltipContainer as any).updateBackground = updateTooltipBackground;
 
-        // Initialize tile loader
+        // Initialize tile loader with progress callback
         const tileLoader = new TileLoader(
           mapData.id,
           mapData.width,
@@ -122,7 +183,12 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
             renderTile(tile);
           },
           (tile: LoadedTile) => {
-            console.error("Failed to load tile:", tile.url);
+            console.warn("Failed to load tile:", tile.url);
+          },
+          (loaded: number, total: number, currentZoom: number) => {
+            // Progress callback
+            const isComplete = tileLoader.isPreloadComplete();
+            onLoadingProgress?.(loaded, total, currentZoom, isComplete);
           }
         );
         tileLoaderRef.current = tileLoader;
@@ -138,6 +204,9 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
 
         appRef.current = app;
         setIsReady(true);
+
+        // Start preloading all tiles for current view mode
+        tileLoader.preloadAllTiles(mapView);
       } catch (error) {
         console.error("Error initializing PixiJS:", error);
         if (!isMounted) return;
@@ -163,6 +232,12 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
       if (tilesContainerRef.current) {
         tilesContainerRef.current = null;
       }
+      if (cellsContainerRef.current) {
+        cellsContainerRef.current = null;
+      }
+      if (hoverOverlayRef.current) {
+        hoverOverlayRef.current = null;
+      }
       if (interactivityContainerRef.current) {
         interactivityContainerRef.current = null;
       }
@@ -173,6 +248,7 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
         tooltipContainerRef.current = null;
       }
       tileSpritesRef.current.clear();
+      cellGraphicsRef.current.clear();
       if (renderTimeoutRef.current) {
         clearTimeout(renderTimeoutRef.current);
       }
@@ -192,15 +268,23 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
 
     try {
       const texture = Texture.from(tile.image);
+      
+      // Enable high-quality texture filtering
+      texture.source.scaleMode = 'linear';
+      
       const sprite = new Sprite(texture);
 
-      // Calculate tile position in world coordinates
+      // Calculate tile position in world coordinates using dynamic tile size
       const multiplier = ZOOM_MULTIPLIERS[tile.coordinate.zoom];
-      const worldTileSize = TILE_SIZE * multiplier;
+      const tileSize = getTileSize(tile.coordinate.zoom);
+      const worldTileSize = tileSize * multiplier;
       sprite.x = tile.coordinate.x * worldTileSize;
       sprite.y = tile.coordinate.y * worldTileSize;
       sprite.width = worldTileSize;
       sprite.height = worldTileSize;
+      
+      // Ensure sprite uses high-quality rendering
+      sprite.roundPixels = false;
 
       tilesContainerRef.current.addChild(sprite);
       tileSpritesRef.current.set(key, sprite);
@@ -208,6 +292,7 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
       console.error("Error rendering tile:", error);
     }
   };
+
 
   // Handle pan and zoom
   useEffect(() => {
@@ -290,114 +375,163 @@ export default function MapCanvas({ onCellClick, onCellRightClick }: MapCanvasPr
       interactivityContainerRef.current.x = position.x;
       interactivityContainerRef.current.y = position.y;
     }
+    if (cellsContainerRef.current && cellsContainerRef.current.parent) {
+      cellsContainerRef.current.scale.set(scale);
+      cellsContainerRef.current.x = position.x;
+      cellsContainerRef.current.y = position.y;
+    }
+    if (hoverOverlayRef.current && hoverOverlayRef.current.parent) {
+      hoverOverlayRef.current.scale.set(scale);
+      hoverOverlayRef.current.x = position.x;
+      hoverOverlayRef.current.y = position.y;
+    }
   }, [scale, position]);
 
-  // Update tiles based on viewport
+  // Restart preload when view mode changes
   useEffect(() => {
     if (!isReady || !mapData || !tileLoaderRef.current) return;
 
-    const currentParams = { scale, position, mapView };
-    const lastParams = lastRenderParamsRef.current;
-    const needsUpdate =
-      !lastParams ||
-      lastParams.mapView !== mapView ||
-      Math.abs(lastParams.scale - scale) > 0.1 ||
-      Math.abs(lastParams.position.x - position.x) > 50 ||
-      Math.abs(lastParams.position.y - position.y) > 50;
+    // When view mode changes, restart preload for new view mode
+    tileLoaderRef.current.preloadAllTiles(mapView);
+  }, [isReady, mapData, mapView]);
 
-    if (!needsUpdate && lastParams) {
-      return;
+  // Update hover effect and tooltip
+  const updateHoverEffect = (cell: VoronoiCell, mouseX?: number, mouseY?: number) => {
+    if (!hoverOverlayRef.current || !tooltipContainerRef.current || !tooltipRef.current || !appRef.current) return;
+
+    const hoverOverlay = hoverOverlayRef.current;
+    const tooltipContainer = tooltipContainerRef.current;
+    const tooltip = tooltipRef.current;
+
+    // Clear previous hover effect
+    hoverOverlay.removeChildren();
+
+    // Draw border highlight
+    const hoverGraphics = new Graphics();
+    hoverGraphics.setStrokeStyle({ width: Math.max(2, 2 / scale), color: 0x3b82f6, alpha: 1 });
+    hoverGraphics.beginPath();
+    const firstPoint = cell.polygon[0];
+    hoverGraphics.moveTo(firstPoint[0], firstPoint[1]);
+    for (let i = 1; i < cell.polygon.length; i++) {
+      const [x, y] = cell.polygon[i];
+      hoverGraphics.lineTo(x, y);
+    }
+    hoverGraphics.closePath();
+    hoverGraphics.stroke();
+    hoverOverlay.addChild(hoverGraphics);
+
+    // Update tooltip with game info
+    const territory = territories.find(t => t.cellId === cell.id);
+    const territoryPlayer = territory ? allPlayers.find(p => p.id === territory.playerId) : null;
+    const settlement = settlements.find(s => s.cellId === cell.id);
+    const settlementPlayer = settlement ? allPlayers.find(p => p.id === settlement.playerId) : null;
+
+    let tooltipText = `Terrain: ${cell.terrain === "water" ? "Water" : "Land"}`;
+    if (cell.resource) {
+      const resourceMeta = RESOURCE_METADATA[cell.resource];
+      tooltipText += `\nResource: ${resourceMeta.name}`;
+    }
+    if (territoryPlayer) {
+      tooltipText += `\nTerritory: ${territoryPlayer.nationName}`;
+    }
+    if (settlement) {
+      const settlementOwner = settlementPlayer || allPlayers.find(p => p.id === settlement.playerId);
+      tooltipText += `\nSettlement: ${settlementOwner?.nationName || "Unknown"} (Pop: ${settlement.population})`;
     }
 
-    lastRenderParamsRef.current = currentParams;
-
-    if (renderTimeoutRef.current) {
-      clearTimeout(renderTimeoutRef.current);
+    tooltip.text = tooltipText;
+    
+    if (mouseX !== undefined && mouseY !== undefined) {
+      tooltipContainer.x = mouseX;
+      tooltipContainer.y = mouseY - 20;
     }
-
-    const delay = isDraggingRef.current ? 100 : 16;
-    renderTimeoutRef.current = setTimeout(() => {
-      if (!mapData || !tileLoaderRef.current) return;
-
-      // Calculate viewport
-      const viewport: Viewport = {
-        x: -position.x / scale,
-        y: -position.y / scale,
-        width: window.innerWidth / scale,
-        height: window.innerHeight / scale,
-      };
-
-      // Update tile loader
-      tileLoaderRef.current.updateViewport(viewport, scale, mapView, true);
-
-      // Clean up tiles outside viewport
-      cleanupTiles(viewport, scale);
-    }, delay);
-
-    return () => {
-      if (renderTimeoutRef.current) {
-        clearTimeout(renderTimeoutRef.current);
-      }
-    };
-  }, [isReady, mapData, mapView, scale, position]);
-
-  // Clean up tiles outside viewport
-  const cleanupTiles = (viewport: Viewport, currentScale: number) => {
-    if (!tilesContainerRef.current) return;
-
-    const padding = TILE_SIZE * 2; // Keep tiles slightly outside viewport
-    const expandedViewport = {
-      x: viewport.x - padding,
-      y: viewport.y - padding,
-      width: viewport.width + padding * 2,
-      height: viewport.height + padding * 2,
-    };
-
-    const tilesToRemove: string[] = [];
-
-    tileSpritesRef.current.forEach((sprite, key) => {
-      const [zoomStr, xStr, yStr] = key.split("-");
-      const zoom = parseInt(zoomStr);
-      const x = parseInt(xStr);
-      const y = parseInt(yStr);
-
-      const multiplier = ZOOM_MULTIPLIERS[zoom];
-      const worldTileSize = TILE_SIZE * multiplier;
-      const tileWorldX = x * worldTileSize;
-      const tileWorldY = y * worldTileSize;
-
-      const isVisible =
-        tileWorldX + worldTileSize >= expandedViewport.x &&
-        tileWorldX <= expandedViewport.x + expandedViewport.width &&
-        tileWorldY + worldTileSize >= expandedViewport.y &&
-        tileWorldY <= expandedViewport.y + expandedViewport.height;
-
-      // Also remove tiles from different zoom levels that are too far off
-      const currentZoom = scaleToZoomLevel(currentScale);
-      const zoomDiff = Math.abs(zoom - currentZoom);
-
-      if (!isVisible || zoomDiff > 1) {
-        tilesToRemove.push(key);
-      }
-    });
-
-    tilesToRemove.forEach((key) => {
-      const sprite = tileSpritesRef.current.get(key);
-      if (sprite && tilesContainerRef.current) {
-        tilesContainerRef.current.removeChild(sprite);
-        sprite.destroy();
-        tileSpritesRef.current.delete(key);
-      }
-    });
+    tooltipContainer.visible = true;
+    (tooltipContainer as any).updateBackground();
   };
 
-  const scaleToZoomLevel = (scale: number): number => {
-    if (scale < 0.5) return 0;
-    if (scale < 1) return 1;
-    if (scale < 2) return 2;
-    if (scale < 4) return 3;
-    return 4;
-  };
+  // Render cell hitboxes
+  useEffect(() => {
+    if (!isReady || !fullMapData || !cellsContainerRef.current) return;
+
+    const container = cellsContainerRef.current;
+    container.removeChildren();
+    cellGraphicsRef.current.clear();
+
+    fullMapData.cells.forEach((cell) => {
+      if (!cell.polygon || cell.polygon.length < 3) return;
+
+      const graphics = new Graphics();
+      
+      // Draw polygon path (invisible but interactive)
+      graphics.beginPath();
+      const firstPoint = cell.polygon[0];
+      graphics.moveTo(firstPoint[0], firstPoint[1]);
+      
+      for (let i = 1; i < cell.polygon.length; i++) {
+        const [x, y] = cell.polygon[i];
+        graphics.lineTo(x, y);
+      }
+      graphics.closePath();
+      
+      // Make invisible but interactive
+      graphics.alpha = 0;
+      graphics.eventMode = "static";
+      graphics.cursor = "pointer";
+      
+      // Store cell data for click/hover handlers
+      (graphics as any).cellData = cell;
+      
+      // Add click handlers
+      graphics.on("pointerdown", (e: any) => {
+        const event = e.data.originalEvent as MouseEvent;
+        if (event.button === 0) {
+          onCellClick?.(cell, event);
+        } else if (event.button === 2) {
+          onCellRightClick?.(cell, event);
+        }
+      });
+
+      // Add hover handlers
+      graphics.on("pointerenter", (e: any) => {
+        hoveredCellRef.current = cell;
+        const canvas = appRef.current?.canvas;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = e.data.global.x;
+          const mouseY = e.data.global.y;
+          updateHoverEffect(cell, mouseX, mouseY);
+        } else {
+          updateHoverEffect(cell);
+        }
+      });
+
+      graphics.on("pointermove", (e: any) => {
+        if (hoveredCellRef.current === cell) {
+          const canvas = appRef.current?.canvas;
+          if (canvas && tooltipContainerRef.current) {
+            const mouseX = e.data.global.x;
+            const mouseY = e.data.global.y;
+            tooltipContainerRef.current.x = mouseX;
+            tooltipContainerRef.current.y = mouseY - 20;
+            (tooltipContainerRef.current as any).updateBackground();
+          }
+        }
+      });
+
+      graphics.on("pointerleave", () => {
+        hoveredCellRef.current = null;
+        if (hoverOverlayRef.current) {
+          hoverOverlayRef.current.removeChildren();
+        }
+        if (tooltipContainerRef.current) {
+          tooltipContainerRef.current.visible = false;
+        }
+      });
+
+      container.addChild(graphics);
+      cellGraphicsRef.current.set(cell.id, graphics);
+    });
+  }, [isReady, fullMapData, onCellClick, onCellRightClick, territories, allPlayers, settlements, scale]);
 
   // Render settlements overlay
   useEffect(() => {

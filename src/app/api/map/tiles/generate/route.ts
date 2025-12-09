@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { MapData, MapView } from "@/types/game";
-import { generateTile, getTileKey, calculateTileBounds } from "@/lib/tileGeneration";
+import { generateTile, getTileKey, getTileSize } from "@/lib/tileGeneration";
 
-const TILE_SIZE = 512;
 const ZOOM_MULTIPLIERS = [1, 2, 4, 8, 16];
 
 /**
@@ -71,7 +70,8 @@ export async function POST(request: NextRequest) {
 
     for (let zoomLevel = 0; zoomLevel <= 4; zoomLevel++) {
       const multiplier = ZOOM_MULTIPLIERS[zoomLevel];
-      const worldTileSize = TILE_SIZE * multiplier;
+      const tileSize = getTileSize(zoomLevel);
+      const worldTileSize = tileSize * multiplier;
       const tilesX = Math.ceil(map.width / worldTileSize);
       const tilesY = Math.ceil(map.height / worldTileSize);
       totalTiles += tilesX * tilesY * viewModes.length;
@@ -97,7 +97,8 @@ export async function POST(request: NextRequest) {
 
     for (let zoomLevel = 0; zoomLevel <= 4; zoomLevel++) {
       const multiplier = ZOOM_MULTIPLIERS[zoomLevel];
-      const worldTileSize = TILE_SIZE * multiplier;
+      const tileSize = getTileSize(zoomLevel);
+      const worldTileSize = tileSize * multiplier;
       const tilesX = Math.ceil(map.width / worldTileSize);
       const tilesY = Math.ceil(map.height / worldTileSize);
 

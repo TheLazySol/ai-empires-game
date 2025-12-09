@@ -3,8 +3,18 @@ import { VoronoiCell, MapView, TerrainType, MapData } from "@/types/game";
 import { ResourceType, RESOURCE_METADATA } from "@/types/resources";
 import { TileCoordinate } from "@/types/game";
 
-const TILE_SIZE = 512;
+const BASE_TILE_SIZE = 512;
+const HIGH_RES_TILE_SIZE = 1024;
 const ZOOM_MULTIPLIERS = [1, 2, 4, 8, 16]; // For zoom levels 0-4
+
+/**
+ * Get tile size based on zoom level
+ * Higher zoom levels (2-4) use 1024px for better quality
+ * Lower zoom levels (0-1) use 512px for better performance
+ */
+export function getTileSize(zoomLevel: number): number {
+  return zoomLevel >= 2 ? HIGH_RES_TILE_SIZE : BASE_TILE_SIZE;
+}
 
 export interface TileBounds {
   minX: number;
@@ -24,7 +34,8 @@ export function calculateTileBounds(
   mapHeight: number
 ): TileBounds {
   const multiplier = ZOOM_MULTIPLIERS[zoomLevel];
-  const worldTileSize = TILE_SIZE * multiplier;
+  const tileSize = getTileSize(zoomLevel);
+  const worldTileSize = tileSize * multiplier;
   
   const minX = tileX * worldTileSize;
   const maxX = minX + worldTileSize;
@@ -47,7 +58,8 @@ export function getCellsForTile(
   bounds: TileBounds,
   zoomLevel: number
 ): VoronoiCell[] {
-  const padding = TILE_SIZE * 0.1; // Add padding to include cells near edges
+  const tileSize = getTileSize(zoomLevel);
+  const padding = tileSize * 0.1; // Add padding to include cells near edges
   const expandedBounds = {
     minX: bounds.minX - padding,
     maxX: bounds.maxX + padding,
@@ -154,19 +166,23 @@ export function renderCellsToTile(
   territories: Map<string, string> = new Map(),
   playerColors: Map<string, string> = new Map()
 ): Buffer {
-  const canvas = createCanvas(TILE_SIZE, TILE_SIZE);
+  const tileSize = getTileSize(zoomLevel);
+  const canvas = createCanvas(tileSize, tileSize);
   const ctx = canvas.getContext("2d");
+  
+  // Enable high-quality rendering
+  ctx.imageSmoothingEnabled = true;
   
   // Clear canvas with background color
   ctx.fillStyle = "#f5f5f5";
-  ctx.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+  ctx.fillRect(0, 0, tileSize, tileSize);
   
   // Calculate scale and offset to transform world coordinates to tile coordinates
   const multiplier = ZOOM_MULTIPLIERS[zoomLevel];
-  const worldTileSize = TILE_SIZE * multiplier;
+  const worldTileSize = tileSize * multiplier;
   const offsetX = -bounds.minX;
   const offsetY = -bounds.minY;
-  const scale = TILE_SIZE / worldTileSize;
+  const scale = tileSize / worldTileSize;
   
     // Render cells
     for (const cell of cells) {
@@ -210,8 +226,9 @@ export function renderCellsToTile(
       }
     }
   
-  // Return PNG buffer
-  return canvas.toBuffer("image/png");
+  // Return PNG buffer with high quality (compressionLevel: 0 = no compression, 9 = max compression)
+  // Using level 6 for a balance between quality and file size
+  return canvas.toBuffer("image/png", { compressionLevel: 6 });
 }
 
 /**
@@ -268,7 +285,8 @@ export function worldToTile(
   zoomLevel: number
 ): TileCoordinate {
   const multiplier = ZOOM_MULTIPLIERS[zoomLevel];
-  const worldTileSize = TILE_SIZE * multiplier;
+  const tileSize = getTileSize(zoomLevel);
+  const worldTileSize = tileSize * multiplier;
   
   return {
     x: Math.floor(worldX / worldTileSize),
@@ -287,7 +305,8 @@ export function getTilesForViewport(
   mapHeight: number
 ): TileCoordinate[] {
   const multiplier = ZOOM_MULTIPLIERS[zoomLevel];
-  const worldTileSize = TILE_SIZE * multiplier;
+  const tileSize = getTileSize(zoomLevel);
+  const worldTileSize = tileSize * multiplier;
   
   const minTileX = Math.floor(Math.max(0, viewport.x) / worldTileSize);
   const maxTileX = Math.ceil(Math.min(mapWidth, viewport.x + viewport.width) / worldTileSize);

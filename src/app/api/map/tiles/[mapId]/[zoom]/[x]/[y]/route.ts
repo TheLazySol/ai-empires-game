@@ -52,18 +52,42 @@ export async function GET(
         .eq("id", tileId)
         .single();
 
-      if (!cacheError && cachedTile) {
-        // Return cached tile - convert Buffer to ArrayBuffer for NextResponse
-        const buffer = cachedTile.tile_data instanceof Buffer 
-          ? cachedTile.tile_data
-          : Buffer.from(cachedTile.tile_data);
-        const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
-        return new NextResponse(arrayBuffer, {
-          headers: {
-            "Content-Type": "image/png",
-            "Cache-Control": "public, max-age=31536000, immutable",
-          },
-        });
+      if (!cacheError && cachedTile && cachedTile.tile_data) {
+        try {
+          // Return cached tile - convert Buffer/ArrayBuffer/Uint8Array to Buffer
+          let buffer: Buffer;
+          if (Buffer.isBuffer(cachedTile.tile_data)) {
+            buffer = cachedTile.tile_data;
+          } else if (cachedTile.tile_data instanceof Uint8Array) {
+            buffer = Buffer.from(cachedTile.tile_data);
+          } else if (cachedTile.tile_data instanceof ArrayBuffer) {
+            buffer = Buffer.from(cachedTile.tile_data);
+          } else {
+            // Handle PostgreSQL bytea format (base64 or hex)
+            buffer = Buffer.from(cachedTile.tile_data as any);
+          }
+          
+          // Validate buffer is not empty
+          if (buffer.length === 0) {
+            throw new Error("Empty tile buffer");
+          }
+          
+          // Convert to ArrayBuffer for NextResponse
+          const arrayBuffer = buffer.buffer.slice(
+            buffer.byteOffset, 
+            buffer.byteOffset + buffer.byteLength
+          ) as ArrayBuffer;
+          
+          return new NextResponse(arrayBuffer, {
+            headers: {
+              "Content-Type": "image/png",
+              "Cache-Control": "public, max-age=31536000, immutable",
+            },
+          });
+        } catch (bufferError) {
+          console.error("Error processing cached tile buffer:", bufferError);
+          // Fall through to regenerate tile
+        }
       }
     }
 
@@ -111,39 +135,69 @@ export async function GET(
     }
 
     // Generate tile
-    const tileBuffer = await generateTile(
-      map,
-      tileX,
-      tileY,
-      zoomLevel,
-      viewMode,
-      territoriesMap,
-      playerColorsMap
-    );
+    let tileBuffer: Buffer;
+    try {
+      tileBuffer = await generateTile(
+        map,
+        tileX,
+        tileY,
+        zoomLevel,
+        viewMode,
+        territoriesMap,
+        playerColorsMap
+      );
+      
+      // Validate generated tile buffer
+      if (!tileBuffer || tileBuffer.length === 0) {
+        throw new Error("Generated tile buffer is empty");
+      }
+    } catch (genError) {
+      console.error(`Error generating tile ${tileX},${tileY} at zoom ${zoomLevel}:`, genError);
+      return NextResponse.json(
+        {
+          error: "Failed to generate tile",
+          details: genError instanceof Error ? genError.message : "Unknown generation error",
+        },
+        { status: 500 }
+      );
+    }
 
-    // Save tile to cache
+    // Save tile to cache (don't block on this)
     const now = new Date().toISOString();
-    await supabase.from("map_tiles").upsert({
-      id: tileId,
-      map_id: mapId,
-      zoom_level: zoomLevel,
-      tile_x: tileX,
-      tile_y: tileY,
-      view_mode: viewMode,
-      tile_data: tileBuffer,
-      created_at: now,
-      updated_at: now,
-    }, {
-      onConflict: "id",
-    });
+    (async () => {
+      try {
+        await supabase.from("map_tiles").upsert({
+          id: tileId,
+          map_id: mapId,
+          zoom_level: zoomLevel,
+          tile_x: tileX,
+          tile_y: tileY,
+          view_mode: viewMode,
+          tile_data: tileBuffer,
+          created_at: now,
+          updated_at: now,
+        }, {
+          onConflict: "id",
+        });
+      } catch (saveError) {
+        console.error("Error saving tile to cache:", saveError);
+        // Don't fail the request if cache save fails
+      }
+    })();
 
-    // Clear invalidation record if it exists
+    // Clear invalidation record if it exists (don't block on this)
     if (invalidated) {
-      await clearTileInvalidation(mapId, tileX, tileY, zoomLevel, viewMode);
+      clearTileInvalidation(mapId, tileX, tileY, zoomLevel, viewMode).catch((clearError) => {
+        console.error("Error clearing tile invalidation:", clearError);
+      });
     }
 
     // Return tile - convert Buffer to ArrayBuffer for NextResponse
-    const arrayBuffer = tileBuffer.buffer.slice(tileBuffer.byteOffset, tileBuffer.byteOffset + tileBuffer.byteLength) as ArrayBuffer;
+    const arrayBuffer = tileBuffer.buffer.slice(
+      tileBuffer.byteOffset, 
+      tileBuffer.byteOffset + tileBuffer.byteLength
+    ) as ArrayBuffer;
+    
     return new NextResponse(arrayBuffer, {
       headers: {
         "Content-Type": "image/png",
