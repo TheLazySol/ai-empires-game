@@ -11,12 +11,22 @@ export enum TerrainType {
   Land = "land",
 }
 
+export enum TileType {
+  Plains = "plains",
+  Woods = "woods",
+  Mountains = "mountains",
+  Hills = "hills",
+  Desert = "desert",
+  Swamp = "swamp",
+}
+
 export interface HexCell {
   id: string;
   site: [number, number]; // Center point
   polygon: [number, number][]; // Hexagon vertices (always 6 points)
   neighbors: string[]; // IDs of neighboring hexagons (always 6 neighbors)
   terrain: TerrainType;
+  tileType?: TileType; // Tile type for land tiles (Plains, Woods, Mountains, Hills, Desert, Swamp)
   resource?: ResourceType;
   ownerId?: string; // Player ID who owns this cell
 }

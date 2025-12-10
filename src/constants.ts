@@ -36,6 +36,26 @@ export const NUMBER_OF_ISLANDS = 12;
 // - 0.8-1.5: Very rough, jagged coastlines with many peninsulas
 export const LAND_VARIANCE = 1.5;
 
+// Land/Water distribution
+// Percentage of tiles that should be land (0.0 - 1.0)
+// Remaining percentage will be water tiles
+// Recommended: 0.3-0.5 for balanced maps
+export const LAND_TILE_PERCENTAGE = 0.45;
+
+// Tile type distribution percentages (0.0 - 1.0)
+// Controls the percentage of land tiles that will be each tile type
+// Values represent the probability that a land tile will be that type
+// Note: Tile types are randomly distributed across all available land tiles
+// Sum should ideally be close to 1.0 for proper distribution
+export const TILE_TYPES = {
+  PLAINS: 0.30,      // 30% of land tiles
+  WOODS: 0.25,       // 25% of land tiles
+  MOUNTAINS: 0.15,   // 15% of land tiles
+  HILLS: 0.15,       // 15% of land tiles
+  DESERT: 0.10,      // 10% of land tiles
+  SWAMP: 0.05,       // 5% of land tiles
+} as const;
+
 // Resource scarcity percentages (0.0 - 1.0)
 // Controls the percentage of land cells that will contain each resource type
 // Values represent the probability that a land cell will have that resource

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Application, Graphics, Container, Text } from "pixi.js";
 import { useAtomValue } from "jotai";
 import { mapDataAtom, mapViewAtom, settlementsAtom, playerAtom } from "@/store/gameState";
-import { MapView, HexCell, MapData, Territory, Player as GamePlayer } from "@/types/game";
+import { MapView, HexCell, MapData, Territory, Player as GamePlayer, TileType, TerrainType } from "@/types/game";
 import { RESOURCE_METADATA } from "@/types/resources";
 import { getCellFillColor } from "@/lib/cellRendering";
 
@@ -343,14 +343,33 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
     const settlement = settlements.find(s => s.cellId === cell.id);
     const settlementPlayer = settlement ? allPlayers.find(p => p.id === settlement.playerId) : null;
 
-    let tooltipText = `Terrain: ${cell.terrain === "water" ? "Water" : "Land"}`;
+    // Format tile type name (capitalize first letter)
+    const formatTileType = (tileType?: TileType): string => {
+      if (!tileType) return "Unknown";
+      return tileType.charAt(0).toUpperCase() + tileType.slice(1);
+    };
+
+    let tooltipText = "";
+    
+    // Tile Type (for land tiles)
+    if (cell.terrain === TerrainType.Land && cell.tileType) {
+      tooltipText += `Tile Type: ${formatTileType(cell.tileType)}`;
+    } else {
+      tooltipText += `Terrain: ${cell.terrain === TerrainType.Water ? "Water" : "Land"}`;
+    }
+    
+    // Resource Type
     if (cell.resource) {
       const resourceMeta = RESOURCE_METADATA[cell.resource];
       tooltipText += `\nResource: ${resourceMeta.name}`;
     }
+    
+    // Owner (Territory)
     if (territoryPlayer) {
-      tooltipText += `\nTerritory: ${territoryPlayer.nationName}`;
+      tooltipText += `\nOwner: ${territoryPlayer.nationName}`;
     }
+    
+    // Settlement info
     if (settlement) {
       const settlementOwner = settlementPlayer || allPlayers.find(p => p.id === settlement.playerId);
       tooltipText += `\nSettlement: ${settlementOwner?.nationName || "Unknown"} (Pop: ${settlement.population})`;

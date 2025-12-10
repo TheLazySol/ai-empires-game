@@ -7,7 +7,10 @@ import {
   HEX_SIZE,
   NUMBER_OF_CONTINENTS,
   NUMBER_OF_ISLANDS,
-  LAND_VARIANCE
+  LAND_VARIANCE,
+  LAND_TILE_PERCENTAGE,
+  TILE_TYPES,
+  RESOURCE_SCARCITY
 } from "@/constants";
 
 export async function POST(request: NextRequest) {
@@ -20,16 +23,31 @@ export async function POST(request: NextRequest) {
     const numContinents = body.numContinents || NUMBER_OF_CONTINENTS;
     const numIslands = body.numIslands || NUMBER_OF_ISLANDS;
     const landVariance = body.landVariance || LAND_VARIANCE;
+    const landTilePercentage = body.landTilePercentage !== undefined ? body.landTilePercentage : LAND_TILE_PERCENTAGE;
+    const tileTypes = body.tileTypes || TILE_TYPES;
+    const resourceScarcity = body.resourceScarcity || RESOURCE_SCARCITY;
 
     console.log(`Generating map with seed: ${seed}`);
     console.log(`Size: ${width}x${height}`);
     console.log(`Hex size: ${hexSize}`);
     console.log(`Continents: ${numContinents}, Islands: ${numIslands}, Variance: ${landVariance}`);
+    console.log(`Land tile percentage: ${(landTilePercentage * 100).toFixed(1)}%`);
 
     // Generate the map
     let mapData;
     try {
-      mapData = generateMap(seed, width, height, hexSize, numContinents, numIslands, landVariance);
+      mapData = generateMap(
+        seed, 
+        width, 
+        height, 
+        hexSize, 
+        numContinents, 
+        numIslands, 
+        landVariance,
+        landTilePercentage,
+        tileTypes,
+        resourceScarcity
+      );
       console.log(`Map generated: ${mapData.cells.length} hexagons`);
     } catch (genError) {
       console.error("Error in map generation:", genError);

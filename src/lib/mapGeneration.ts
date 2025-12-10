@@ -1,4 +1,4 @@
-import { HexCell, TerrainType, MapData } from "@/types/game";
+import { HexCell, TerrainType, TileType, MapData } from "@/types/game";
 import { ResourceType } from "@/types/resources";
 import { 
   MAP_WIDTH, 
@@ -8,6 +8,8 @@ import {
   NUMBER_OF_CONTINENTS,
   NUMBER_OF_ISLANDS,
   LAND_VARIANCE,
+  LAND_TILE_PERCENTAGE,
+  TILE_TYPES,
   RESOURCE_SCARCITY
 } from "@/constants";
 
@@ -314,14 +316,14 @@ function evaluateIsland(
   return baseShape + noiseInfluence;
 }
 
-// Generate terrain type with multiple continents and islands
-function getTerrainType(
+// Calculate elevation for a point (used for terrain assignment)
+function calculateElevation(
   x: number, 
   y: number, 
   continents: Continent[],
   islands: Island[],
   variance: number
-): TerrainType {
+): number {
   let maxElevation = 0;
   
   // Check all continents
@@ -344,51 +346,78 @@ function getTerrainType(
     }
   }
   
-  // Threshold for land vs water
-  const waterThreshold = 0.15;
+  return maxElevation;
+}
+
+// Assign tile type to land tiles based on distribution percentages
+function assignTileType(tileTypes: typeof TILE_TYPES): TileType {
+  const rand = Math.random();
+  let cumulative = 0;
   
-  return maxElevation > waterThreshold ? TerrainType.Land : TerrainType.Water;
+  // Check each tile type in order
+  if (rand < (cumulative += tileTypes.PLAINS)) {
+    return TileType.Plains;
+  }
+  if (rand < (cumulative += tileTypes.WOODS)) {
+    return TileType.Woods;
+  }
+  if (rand < (cumulative += tileTypes.MOUNTAINS)) {
+    return TileType.Mountains;
+  }
+  if (rand < (cumulative += tileTypes.HILLS)) {
+    return TileType.Hills;
+  }
+  if (rand < (cumulative += tileTypes.DESERT)) {
+    return TileType.Desert;
+  }
+  if (rand < (cumulative += tileTypes.SWAMP)) {
+    return TileType.Swamp;
+  }
+  
+  // Default to Plains if somehow we exceed 1.0
+  return TileType.Plains;
 }
 
 // Assign resources randomly across available lands based on scarcity percentages
-function assignResource(terrain: TerrainType, x: number, y: number, width: number, height: number): ResourceType | undefined {
-  const rand = Math.random();
-  
-  if (terrain === TerrainType.Water) {
-    // Water resources can appear in water terrain
-    return rand < RESOURCE_SCARCITY.WATER ? ResourceType.Water : undefined;
+// IMPORTANT: Resources are ONLY assigned to land tiles
+function assignResource(terrain: TerrainType, x: number, y: number, width: number, height: number, resourceScarcity: typeof RESOURCE_SCARCITY): ResourceType | undefined {
+  // Only assign resources to land tiles
+  if (terrain !== TerrainType.Land) {
+    return undefined;
   }
 
+  const rand = Math.random();
+  
   // Land resources - randomly distributed based on scarcity percentages
   // Use cumulative probability to ensure only one resource per cell
   let cumulative = 0;
   
   // Check each resource type in order (rarest first)
-  if (rand < (cumulative += RESOURCE_SCARCITY.GOLD)) {
+  if (rand < (cumulative += resourceScarcity.GOLD)) {
     return ResourceType.Gold;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.BRONZE)) {
+  if (rand < (cumulative += resourceScarcity.BRONZE)) {
     return ResourceType.Bronze;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.IRON)) {
+  if (rand < (cumulative += resourceScarcity.IRON)) {
     return ResourceType.Iron;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.COAL)) {
+  if (rand < (cumulative += resourceScarcity.COAL)) {
     return ResourceType.Coal;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.WHEAT)) {
+  if (rand < (cumulative += resourceScarcity.WHEAT)) {
     return ResourceType.Wheat;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.WOOD)) {
+  if (rand < (cumulative += resourceScarcity.WOOD)) {
     return ResourceType.Wood;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.COTTON)) {
+  if (rand < (cumulative += resourceScarcity.COTTON)) {
     return ResourceType.Cotton;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.WILDLIFE)) {
+  if (rand < (cumulative += resourceScarcity.WILDLIFE)) {
     return ResourceType.Wildlife;
   }
-  if (rand < (cumulative += RESOURCE_SCARCITY.WATER)) {
+  if (rand < (cumulative += resourceScarcity.WATER)) {
     return ResourceType.Water; // Water sources on land
   }
 
@@ -402,7 +431,10 @@ export function generateMap(
   hexSize: number = HEX_SIZE,
   numContinents: number = NUMBER_OF_CONTINENTS,
   numIslands: number = NUMBER_OF_ISLANDS,
-  landVariance: number = LAND_VARIANCE
+  landVariance: number = LAND_VARIANCE,
+  landTilePercentage: number = LAND_TILE_PERCENTAGE,
+  tileTypes: typeof TILE_TYPES = TILE_TYPES,
+  resourceScarcity: typeof RESOURCE_SCARCITY = RESOURCE_SCARCITY
 ): MapData {
   // Set seed for reproducibility
   let seedValue = 0;
@@ -438,10 +470,18 @@ export function generateMap(
     const cols = Math.ceil(width / hexWidth) + 1;
     const rows = Math.ceil(height / hexHeight) + 1;
     
-    const cells: HexCell[] = [];
+    // First pass: Generate all cells with elevation data
+    interface CellWithElevation {
+      cell: HexCell;
+      elevation: number;
+      row: number;
+      col: number;
+    }
+    
+    const cellsWithElevation: CellWithElevation[] = [];
     const cellMap = new Map<string, HexCell>(); // For neighbor lookup: "row,col" -> cell
     
-    // Generate hexagons
+    // Generate hexagons and calculate elevation
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         const [centerX, centerY] = hexToPixel(row, col, hexSize);
@@ -455,26 +495,74 @@ export function generateMap(
         const id = `hex-${row}-${col}`;
         const vertices = generateHexagonVertices(centerX, centerY, hexSize);
         
-        // Determine terrain and resource based on center point
-        const terrain = getTerrainType(centerX, centerY, continents, islands, landVariance);
-        const resource = terrain === TerrainType.Land 
-          ? assignResource(terrain, centerX, centerY, width, height)
-          : undefined;
+        // Calculate elevation for terrain assignment
+        const elevation = calculateElevation(centerX, centerY, continents, islands, landVariance);
         
-        // Create cell (neighbors will be set after all cells are created)
+        // Create cell (terrain and resource will be assigned after sorting)
         const cell: HexCell = {
           id,
           site: [centerX, centerY],
           polygon: vertices,
           neighbors: [], // Will be populated below
-          terrain,
-          resource,
+          terrain: TerrainType.Water, // Default, will be updated
         };
         
-        cells.push(cell);
+        cellsWithElevation.push({
+          cell,
+          elevation,
+          row,
+          col,
+        });
+        
         cellMap.set(`${row},${col}`, cell);
       }
     }
+    
+    // Sort cells by elevation (highest first)
+    cellsWithElevation.sort((a, b) => b.elevation - a.elevation);
+    
+    // Assign land/water based on percentage
+    const totalCells = cellsWithElevation.length;
+    const landCellCount = Math.floor(totalCells * landTilePercentage);
+    
+    // Assign terrain types
+    for (let i = 0; i < totalCells; i++) {
+      if (i < landCellCount) {
+        cellsWithElevation[i].cell.terrain = TerrainType.Land;
+        // Assign tile type to land cells
+        cellsWithElevation[i].cell.tileType = assignTileType(tileTypes);
+        // Assign resources only to land cells
+        cellsWithElevation[i].cell.resource = assignResource(
+          TerrainType.Land,
+          cellsWithElevation[i].cell.site[0],
+          cellsWithElevation[i].cell.site[1],
+          width,
+          height,
+          resourceScarcity
+        );
+      } else {
+        cellsWithElevation[i].cell.terrain = TerrainType.Water;
+        // Water tiles don't get resources or tile types
+      }
+    }
+    
+    // Extract cells array
+    const cells = cellsWithElevation.map(c => c.cell);
+    
+    // Log resource distribution statistics
+    const resourceCounts = new Map<ResourceType, number>();
+    let landCellsWithResources = 0;
+    cells.forEach(cell => {
+      if (cell.terrain === TerrainType.Land && cell.resource) {
+        landCellsWithResources++;
+        resourceCounts.set(cell.resource, (resourceCounts.get(cell.resource) || 0) + 1);
+      }
+    });
+    const totalLandCells = cells.filter(c => c.terrain === TerrainType.Land).length;
+    console.log(`Resource distribution: ${landCellsWithResources}/${totalLandCells} land cells have resources (${((landCellsWithResources / totalLandCells) * 100).toFixed(1)}%)`);
+    resourceCounts.forEach((count, resource) => {
+      console.log(`  ${resource}: ${count} cells (${((count / totalLandCells) * 100).toFixed(1)}% of land)`);
+    });
     
     // Set neighbors for each hexagon
     for (let row = 0; row < rows; row++) {

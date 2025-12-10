@@ -6,11 +6,15 @@ import { playerAtom, mapDataAtom } from "@/store/gameState";
 import { useGameData } from "@/hooks/useGameData";
 import Map from "@/components/map/Map";
 import MapViewSelector from "@/components/map/MapViewSelector";
+import MapSettings from "@/components/map/MapSettings";
 import BottomPanel from "@/components/ui/BottomPanel";
 import PlayerSetup from "@/components/modals/PlayerSetup";
+import { Settings } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const [showPlayerSetup, setShowPlayerSetup] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const player = useAtomValue(playerAtom);
   const mapData = useAtomValue(mapDataAtom);
 
@@ -33,6 +37,16 @@ export default function Home() {
           <Map />
           <MapViewSelector />
           <BottomPanel />
+          {/* Settings button in top-right */}
+          <Button
+            onClick={() => setShowSettings(true)}
+            variant="outline"
+            size="icon"
+            className="absolute top-4 right-4 z-50 bg-white shadow-lg hover:bg-gray-50"
+            aria-label="Open settings"
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
         </>
       ) : (
         <div className="flex h-screen w-full items-center justify-center">
@@ -47,6 +61,10 @@ export default function Home() {
       <PlayerSetup
         open={showPlayerSetup}
         onComplete={() => setShowPlayerSetup(false)}
+      />
+      <MapSettings
+        open={showSettings}
+        onOpenChange={setShowSettings}
       />
     </div>
   );
