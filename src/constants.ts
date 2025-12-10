@@ -9,17 +9,16 @@
 export const MAP_WIDTH = 2400;
 export const MAP_HEIGHT = 1500;
 
-// Cell density divisor - higher values = smaller cells (more cells)
-// This controls the minimum distance between Voronoi sites
-// Formula: minDistance = Math.min(MAP_WIDTH, MAP_HEIGHT) / CELL_DENSITY_DIVISOR
-// 
-// Examples:
-// - 15: Larger cells (fewer cells) - original default
-// - 30: Medium cells - recommended for performance
-// - 40: Smaller cells (more cells) - may impact performance
-// - 50+: Very small cells (many cells) - significant performance impact
-// Optimized for performance: reduced from 80 to 30
-export const CELL_DENSITY_DIVISOR = 50;
+// Hexagon grid configuration
+// Hexagon size (radius from center to vertex) in pixels
+// Smaller values = more hexagons, larger values = fewer hexagons
+// Recommended: 20-40 for good balance of detail and performance
+export const HEX_SIZE = 30;
+
+// Hexagon orientation: "pointy-top" or "flat-top"
+// Pointy-top: hexagons are oriented with a point at the top
+// Flat-top: hexagons are oriented with a flat edge at the top
+export const HEX_ORIENTATION: "pointy-top" | "flat-top" = "pointy-top";
 
 // Terrain generation settings
 // Number of major continents to generate (1-5 recommended)

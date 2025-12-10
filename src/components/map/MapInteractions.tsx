@@ -3,18 +3,18 @@
 import { useState, ReactNode } from "react";
 import { useSetAtom, useAtomValue } from "jotai";
 import { selectedCellAtom, settlementsAtom, playerAtom, mapDataAtom } from "@/store/gameState";
-import { VoronoiCell, Settlement } from "@/types/game";
+import { HexCell, Settlement } from "@/types/game";
 import ContextMenu from "./ContextMenu";
 
 interface MapInteractionsProps {
   children: (handlers: {
-    onCellClick: (cell: VoronoiCell, event: MouseEvent) => void;
-    onCellRightClick: (cell: VoronoiCell, event: MouseEvent) => void;
+    onCellClick: (cell: HexCell, event: MouseEvent) => void;
+    onCellRightClick: (cell: HexCell, event: MouseEvent) => void;
   }) => ReactNode;
 }
 
 export default function MapInteractions({ children }: MapInteractionsProps) {
-  const [contextMenuCell, setContextMenuCell] = useState<VoronoiCell | null>(null);
+  const [contextMenuCell, setContextMenuCell] = useState<HexCell | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const setSelectedCell = useSetAtom(selectedCellAtom);
   const settlements = useAtomValue(settlementsAtom);
@@ -22,14 +22,14 @@ export default function MapInteractions({ children }: MapInteractionsProps) {
   const player = useAtomValue(playerAtom);
   const mapData = useAtomValue(mapDataAtom);
 
-  const handleCellClick = (cell: VoronoiCell, event: MouseEvent) => {
+  const handleCellClick = (cell: HexCell, event: MouseEvent) => {
     setSelectedCell(cell);
     // Close context menu on left click
     setContextMenuCell(null);
     setContextMenuPosition(null);
   };
 
-  const handleCellRightClick = (cell: VoronoiCell, event: MouseEvent) => {
+  const handleCellRightClick = (cell: HexCell, event: MouseEvent) => {
     event.preventDefault();
     setContextMenuCell(cell);
     setContextMenuPosition({ x: event.clientX, y: event.clientY });

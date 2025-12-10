@@ -9,20 +9,10 @@ import MapLoadingBar from "./MapLoadingBar";
 
 export default function Map() {
   const mapData = useAtomValue(mapDataAtom);
-  const [loadingProgress, setLoadingProgress] = useState({
-    loaded: 0,
-    total: 0,
-    currentZoom: 0,
-    isComplete: false,
-  });
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleLoadingProgress = (
-    loaded: number,
-    total: number,
-    currentZoom: number,
-    isComplete: boolean
-  ) => {
-    setLoadingProgress({ loaded, total, currentZoom, isComplete });
+  const handleLoadingProgress = (isComplete: boolean) => {
+    setIsLoading(!isComplete);
   };
 
   return (
@@ -33,12 +23,7 @@ export default function Map() {
         )}
       </MapInteractions>
       {mapData && (
-        <MapLoadingBar
-          loaded={loadingProgress.loaded}
-          total={loadingProgress.total}
-          currentZoom={loadingProgress.currentZoom}
-          isComplete={loadingProgress.isComplete}
-        />
+        <MapLoadingBar isComplete={!isLoading} />
       )}
     </div>
   );

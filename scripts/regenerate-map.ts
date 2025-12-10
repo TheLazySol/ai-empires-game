@@ -17,7 +17,7 @@ import * as dotenv from "dotenv";
 import { 
   MAP_WIDTH, 
   MAP_HEIGHT, 
-  CELL_DENSITY_DIVISOR,
+  HEX_SIZE,
   NUMBER_OF_CONTINENTS,
   NUMBER_OF_ISLANDS,
   LAND_VARIANCE
@@ -43,14 +43,14 @@ async function regenerateMap(seed?: string) {
   const seedValue = seed || `seed-${Date.now()}`;
   const width = MAP_WIDTH;
   const height = MAP_HEIGHT;
-  const cellDensityDivisor = CELL_DENSITY_DIVISOR;
+  const hexSize = HEX_SIZE;
   const numContinents = NUMBER_OF_CONTINENTS;
   const numIslands = NUMBER_OF_ISLANDS;
   const landVariance = LAND_VARIANCE;
   
   console.log(`🗺️  Generating new map with seed: ${seedValue}`);
   console.log(`📏 Size: ${width}x${height}`);
-  console.log(`🔢 Cell density divisor: ${cellDensityDivisor} (higher = smaller cells)`);
+  console.log(`🔢 Hex size: ${hexSize} (smaller = more hexagons)`);
   console.log(`🌍 Continents: ${numContinents}`);
   console.log(`🏝️  Islands: ${numIslands}`);
   console.log(`🌊 Land variance: ${landVariance}`);
@@ -58,8 +58,8 @@ async function regenerateMap(seed?: string) {
   try {
     // Generate the map
     console.log("\n⚙️  Generating map data...");
-    const mapData = generateMap(seedValue, width, height, cellDensityDivisor, numContinents, numIslands, landVariance);
-    console.log(`Map generated: ${mapData.cells.length} cells`);
+    const mapData = generateMap(seedValue, width, height, hexSize, numContinents, numIslands, landVariance);
+    console.log(`Map generated: ${mapData.cells.length} hexagons`);
 
     // Clear existing map data
     try {
@@ -97,7 +97,7 @@ async function regenerateMap(seed?: string) {
     console.log("✅ Map generated successfully!");
     console.log(`Map ID: ${data.id}`);
     console.log(`Seed: ${mapData.seed}`);
-    console.log(`Cells: ${mapData.cells.length}`);
+    console.log(`Hexagons: ${mapData.cells.length}`);
     console.log(`\nYou can now refresh your browser to see the new map.`);
   } catch (error) {
     console.error("❌ Error generating map:");

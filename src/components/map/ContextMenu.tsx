@@ -7,10 +7,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { VoronoiCell, TerrainType } from "@/types/game";
+import { HexCell, TerrainType } from "@/types/game";
 
 interface ContextMenuProps {
-  cell: VoronoiCell | null;
+  cell: HexCell | null;
   position: { x: number; y: number } | null;
   onSettle?: () => void;
   onClose?: () => void;

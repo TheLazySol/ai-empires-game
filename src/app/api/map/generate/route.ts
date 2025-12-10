@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { 
   MAP_WIDTH, 
   MAP_HEIGHT, 
-  CELL_DENSITY_DIVISOR,
+  HEX_SIZE,
   NUMBER_OF_CONTINENTS,
   NUMBER_OF_ISLANDS,
   LAND_VARIANCE
@@ -16,21 +16,21 @@ export async function POST(request: NextRequest) {
     const seed = body.seed || `seed-${Date.now()}`;
     const width = body.width || MAP_WIDTH;
     const height = body.height || MAP_HEIGHT;
-    const cellDensityDivisor = body.cellDensityDivisor || CELL_DENSITY_DIVISOR;
+    const hexSize = body.hexSize || HEX_SIZE;
     const numContinents = body.numContinents || NUMBER_OF_CONTINENTS;
     const numIslands = body.numIslands || NUMBER_OF_ISLANDS;
     const landVariance = body.landVariance || LAND_VARIANCE;
 
     console.log(`Generating map with seed: ${seed}`);
     console.log(`Size: ${width}x${height}`);
-    console.log(`Cell density: ${cellDensityDivisor}`);
+    console.log(`Hex size: ${hexSize}`);
     console.log(`Continents: ${numContinents}, Islands: ${numIslands}, Variance: ${landVariance}`);
 
     // Generate the map
     let mapData;
     try {
-      mapData = generateMap(seed, width, height, cellDensityDivisor, numContinents, numIslands, landVariance);
-      console.log(`Map generated: ${mapData.cells.length} cells`);
+      mapData = generateMap(seed, width, height, hexSize, numContinents, numIslands, landVariance);
+      console.log(`Map generated: ${mapData.cells.length} hexagons`);
     } catch (genError) {
       console.error("Error in map generation:", genError);
       return NextResponse.json(

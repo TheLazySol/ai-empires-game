@@ -1,26 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Application, Graphics, Container, Text, Sprite, Texture } from "pixi.js";
+import { Application, Graphics, Container, Text } from "pixi.js";
 import { useAtomValue } from "jotai";
 import { mapDataAtom, mapViewAtom, settlementsAtom, playerAtom } from "@/store/gameState";
-import { MapView, VoronoiCell, MapMetadata, MapData, Territory, Player as GamePlayer } from "@/types/game";
+import { MapView, HexCell, MapData, Territory, Player as GamePlayer } from "@/types/game";
 import { RESOURCE_METADATA } from "@/types/resources";
-import { TileLoader, Viewport, LoadedTile } from "@/lib/tileLoader";
-import { getTileSize } from "@/lib/tileGeneration";
+import { getCellFillColor } from "@/lib/cellRendering";
 
 interface MapCanvasProps {
-  onCellClick?: (cell: VoronoiCell, event: MouseEvent) => void;
-  onCellRightClick?: (cell: VoronoiCell, event: MouseEvent) => void;
-  onLoadingProgress?: (loaded: number, total: number, currentZoom: number, isComplete: boolean) => void;
+  onCellClick?: (cell: HexCell, event: MouseEvent) => void;
+  onCellRightClick?: (cell: HexCell, event: MouseEvent) => void;
+  onLoadingProgress?: (isComplete: boolean) => void;
 }
-
-const ZOOM_MULTIPLIERS = [1, 2, 4, 8, 16];
 
 export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProgress }: MapCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
-  const tilesContainerRef = useRef<Container | null>(null);
+  const hexagonsContainerRef = useRef<Container | null>(null);
   const interactivityContainerRef = useRef<Container | null>(null);
   const cellsContainerRef = useRef<Container | null>(null);
   const hoverOverlayRef = useRef<Container | null>(null);
@@ -31,12 +28,9 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
-  const tileLoaderRef = useRef<TileLoader | null>(null);
-  const tileSpritesRef = useRef<Map<string, Sprite>>(new Map());
+  const hexagonGraphicsRef = useRef<Map<string, Graphics>>(new Map());
   const cellGraphicsRef = useRef<Map<string, Graphics>>(new Map());
-  const hoveredCellRef = useRef<VoronoiCell | null>(null);
-  const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastRenderParamsRef = useRef<{ scale: number; position: { x: number; y: number }; mapView: MapView } | null>(null);
+  const hoveredCellRef = useRef<HexCell | null>(null);
   
   // Full map data with cells
   const [fullMapData, setFullMapData] = useState<MapData | null>(null);
@@ -60,6 +54,7 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
           const { map } = await mapResponse.json();
           if (map && map.cells) {
             setFullMapData(map);
+            onLoadingProgress?.(true);
           }
         }
 
@@ -82,7 +77,7 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
     };
 
     loadFullMapData();
-  }, [mapData]);
+  }, [mapData, onLoadingProgress]);
 
   // Initialize PixiJS
   useEffect(() => {
@@ -117,9 +112,9 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
         }
 
         // Create containers
-        const tilesContainer = new Container();
-        app.stage.addChild(tilesContainer);
-        tilesContainerRef.current = tilesContainer;
+        const hexagonsContainer = new Container();
+        app.stage.addChild(hexagonsContainer);
+        hexagonsContainerRef.current = hexagonsContainer;
 
         const interactivityContainer = new Container();
         app.stage.addChild(interactivityContainer);
@@ -172,41 +167,17 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
         };
         (tooltipContainer as any).updateBackground = updateTooltipBackground;
 
-        // Initialize tile loader with progress callback
-        const tileLoader = new TileLoader(
-          mapData.id,
-          mapData.width,
-          mapData.height,
-          (tile: LoadedTile) => {
-            // Tile loaded callback
-            if (!tilesContainerRef.current || !tile.image) return;
-            renderTile(tile);
-          },
-          (tile: LoadedTile) => {
-            console.warn("Failed to load tile:", tile.url);
-          },
-          (loaded: number, total: number, currentZoom: number) => {
-            // Progress callback
-            const isComplete = tileLoader.isPreloadComplete();
-            onLoadingProgress?.(loaded, total, currentZoom, isComplete);
-          }
-        );
-        tileLoaderRef.current = tileLoader;
-
         // Center the map initially
         const initialX = (window.innerWidth - mapData.width) / 2;
         const initialY = (window.innerHeight - mapData.height) / 2;
-        tilesContainer.x = initialX;
-        tilesContainer.y = initialY;
+        hexagonsContainer.x = initialX;
+        hexagonsContainer.y = initialY;
         interactivityContainer.x = initialX;
         interactivityContainer.y = initialY;
         setPosition({ x: initialX, y: initialY });
 
         appRef.current = app;
         setIsReady(true);
-
-        // Start preloading all tiles for current view mode
-        tileLoader.preloadAllTiles(mapView);
       } catch (error) {
         console.error("Error initializing PixiJS:", error);
         if (!isMounted) return;
@@ -221,16 +192,12 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
 
     return () => {
       isMounted = false;
-      if (tileLoaderRef.current) {
-        tileLoaderRef.current.destroy();
-        tileLoaderRef.current = null;
-      }
       if (appRef.current) {
         appRef.current.destroy(true, { children: true });
         appRef.current = null;
       }
-      if (tilesContainerRef.current) {
-        tilesContainerRef.current = null;
+      if (hexagonsContainerRef.current) {
+        hexagonsContainerRef.current = null;
       }
       if (cellsContainerRef.current) {
         cellsContainerRef.current = null;
@@ -247,58 +214,16 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
       if (tooltipContainerRef.current) {
         tooltipContainerRef.current = null;
       }
-      tileSpritesRef.current.clear();
+      hexagonGraphicsRef.current.clear();
       cellGraphicsRef.current.clear();
-      if (renderTimeoutRef.current) {
-        clearTimeout(renderTimeoutRef.current);
-      }
     };
   }, [mapData]);
 
-  // Render a tile sprite
-  const renderTile = (tile: LoadedTile) => {
-    if (!tilesContainerRef.current || !tile.image || !appRef.current) return;
-
-    const key = `${tile.coordinate.zoom}-${tile.coordinate.x}-${tile.coordinate.y}-${tile.viewMode}`;
-
-    // Check if sprite already exists
-    if (tileSpritesRef.current.has(key)) {
-      return;
-    }
-
-    try {
-      const texture = Texture.from(tile.image);
-      
-      // Enable high-quality texture filtering
-      texture.source.scaleMode = 'linear';
-      
-      const sprite = new Sprite(texture);
-
-      // Calculate tile position in world coordinates using dynamic tile size
-      const multiplier = ZOOM_MULTIPLIERS[tile.coordinate.zoom];
-      const tileSize = getTileSize(tile.coordinate.zoom);
-      const worldTileSize = tileSize * multiplier;
-      sprite.x = tile.coordinate.x * worldTileSize;
-      sprite.y = tile.coordinate.y * worldTileSize;
-      sprite.width = worldTileSize;
-      sprite.height = worldTileSize;
-      
-      // Ensure sprite uses high-quality rendering
-      sprite.roundPixels = false;
-
-      tilesContainerRef.current.addChild(sprite);
-      tileSpritesRef.current.set(key, sprite);
-    } catch (error) {
-      console.error("Error rendering tile:", error);
-    }
-  };
-
-
   // Handle pan and zoom
   useEffect(() => {
-    if (!isReady || !tilesContainerRef.current || !interactivityContainerRef.current) return;
+    if (!isReady || !hexagonsContainerRef.current || !interactivityContainerRef.current) return;
 
-    const tilesContainer = tilesContainerRef.current;
+    const hexagonsContainer = hexagonsContainerRef.current;
     const interactivityContainer = interactivityContainerRef.current;
     const canvas = canvasRef.current?.querySelector("canvas");
 
@@ -365,10 +290,10 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
 
   // Update container transforms
   useEffect(() => {
-    if (tilesContainerRef.current && tilesContainerRef.current.parent) {
-      tilesContainerRef.current.scale.set(scale);
-      tilesContainerRef.current.x = position.x;
-      tilesContainerRef.current.y = position.y;
+    if (hexagonsContainerRef.current && hexagonsContainerRef.current.parent) {
+      hexagonsContainerRef.current.scale.set(scale);
+      hexagonsContainerRef.current.x = position.x;
+      hexagonsContainerRef.current.y = position.y;
     }
     if (interactivityContainerRef.current && interactivityContainerRef.current.parent) {
       interactivityContainerRef.current.scale.set(scale);
@@ -387,16 +312,8 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
     }
   }, [scale, position]);
 
-  // Restart preload when view mode changes
-  useEffect(() => {
-    if (!isReady || !mapData || !tileLoaderRef.current) return;
-
-    // When view mode changes, restart preload for new view mode
-    tileLoaderRef.current.preloadAllTiles(mapView);
-  }, [isReady, mapData, mapView]);
-
   // Update hover effect and tooltip
-  const updateHoverEffect = (cell: VoronoiCell, mouseX?: number, mouseY?: number) => {
+  const updateHoverEffect = (cell: HexCell, mouseX?: number, mouseY?: number) => {
     if (!hoverOverlayRef.current || !tooltipContainerRef.current || !tooltipRef.current || !appRef.current) return;
 
     const hoverOverlay = hoverOverlayRef.current;
@@ -448,6 +365,56 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
     tooltipContainer.visible = true;
     (tooltipContainer as any).updateBackground();
   };
+
+  // Render hexagons
+  useEffect(() => {
+    if (!isReady || !fullMapData || !hexagonsContainerRef.current) return;
+
+    // Build territories and player colors maps
+    const territoriesMap = new Map<string, string>();
+    const playerColorsMap = new Map<string, string>();
+    
+    territories.forEach((t) => {
+      territoriesMap.set(t.cellId, t.playerId);
+    });
+    
+    allPlayers.forEach((p) => {
+      playerColorsMap.set(p.id, p.color);
+    });
+
+    const container = hexagonsContainerRef.current;
+    container.removeChildren();
+    hexagonGraphicsRef.current.clear();
+
+    fullMapData.cells.forEach((cell) => {
+      if (!cell.polygon || cell.polygon.length !== 6) return;
+
+      const graphics = new Graphics();
+      
+      // Get fill color based on view mode
+      const { color, alpha } = getCellFillColor(cell, mapView, territoriesMap, playerColorsMap);
+      
+      // Draw hexagon path
+      graphics.beginPath();
+      const firstPoint = cell.polygon[0];
+      graphics.moveTo(firstPoint[0], firstPoint[1]);
+      
+      for (let i = 1; i < cell.polygon.length; i++) {
+        const [x, y] = cell.polygon[i];
+        graphics.lineTo(x, y);
+      }
+      graphics.closePath();
+      
+      // Fill hexagon
+      graphics.fill({ color, alpha });
+      
+      // Draw stroke
+      graphics.stroke({ color: 0x999999, width: 0.5, alpha: 0.5 });
+
+      container.addChild(graphics);
+      hexagonGraphicsRef.current.set(cell.id, graphics);
+    });
+  }, [isReady, fullMapData, mapView, territories, allPlayers]);
 
   // Render cell hitboxes
   useEffect(() => {

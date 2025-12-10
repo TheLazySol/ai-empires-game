@@ -1,5 +1,5 @@
 import { createCanvas, CanvasRenderingContext2D } from "canvas";
-import { VoronoiCell, MapView, TerrainType, MapData } from "@/types/game";
+import { HexCell, MapView, TerrainType, MapData } from "@/types/game";
 import { ResourceType, RESOURCE_METADATA } from "@/types/resources";
 import { TileCoordinate } from "@/types/game";
 
@@ -51,15 +51,15 @@ export function calculateTileBounds(
 }
 
 /**
- * Get cells that intersect with a tile's bounds
+ * Get hexagons that intersect with a tile's bounds
  */
 export function getCellsForTile(
-  cells: VoronoiCell[],
+  cells: HexCell[],
   bounds: TileBounds,
   zoomLevel: number
-): VoronoiCell[] {
+): HexCell[] {
   const tileSize = getTileSize(zoomLevel);
-  const padding = tileSize * 0.1; // Add padding to include cells near edges
+  const padding = tileSize * 0.1; // Add padding to include hexagons near edges
   const expandedBounds = {
     minX: bounds.minX - padding,
     maxX: bounds.maxX + padding,
@@ -78,32 +78,13 @@ export function getCellsForTile(
   });
 }
 
-/**
- * Simplify polygon for lower zoom levels
- */
-function simplifyPolygon(
-  polygon: [number, number][],
-  zoomLevel: number
-): [number, number][] {
-  if (zoomLevel >= 2) {
-    return polygon; // Full detail for zoom levels 2-4
-  }
-  
-  // Simplify for zoom levels 0-1
-  if (polygon.length <= 6) {
-    return polygon;
-  }
-  
-  // Use every nth point based on zoom level
-  const step = zoomLevel === 0 ? Math.ceil(polygon.length / 4) : Math.ceil(polygon.length / 6);
-  return polygon.filter((_, i) => i % step === 0);
-}
+// Hexagons are uniform shapes, no simplification needed
 
 /**
- * Get fill color for a cell based on view mode
+ * Get fill color for a hexagon based on view mode
  */
 function getCellFillColor(
-  cell: VoronoiCell,
+  cell: HexCell,
   viewMode: MapView,
   territories: Map<string, string>, // cellId -> playerId
   playerColors: Map<string, string> // playerId -> color
@@ -156,10 +137,10 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 }
 
 /**
- * Render cells to a tile canvas
+ * Render hexagons to a tile canvas
  */
 export function renderCellsToTile(
-  cells: VoronoiCell[],
+  cells: HexCell[],
   bounds: TileBounds,
   zoomLevel: number,
   viewMode: MapView,
@@ -184,47 +165,45 @@ export function renderCellsToTile(
   const offsetY = -bounds.minY;
   const scale = tileSize / worldTileSize;
   
-    // Render cells
-    for (const cell of cells) {
-      if (!cell.polygon || cell.polygon.length < 3) {
-        continue;
-      }
-      
-      const simplifiedPolygon = simplifyPolygon(cell.polygon, zoomLevel);
-      
-      // Get fill color
-      const { color, alpha } = getCellFillColor(cell, viewMode, territories, playerColors);
-      const rgb = hexToRgb(color);
-      
-      // Begin path and draw polygon
-      ctx.beginPath();
-      const firstPoint = simplifiedPolygon[0];
-      const [firstX, firstY] = [
-        (firstPoint[0] + offsetX) * scale,
-        (firstPoint[1] + offsetY) * scale,
-      ];
-      ctx.moveTo(firstX, firstY);
-      
-      for (let i = 1; i < simplifiedPolygon.length; i++) {
-        const [x, y] = [
-          (simplifiedPolygon[i][0] + offsetX) * scale,
-          (simplifiedPolygon[i][1] + offsetY) * scale,
-        ];
-        ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      
-      // Fill cell
-      ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-      ctx.fill();
-      
-      // Draw stroke only for higher zoom levels
-      if (zoomLevel >= 2) {
-        ctx.strokeStyle = "rgba(153, 153, 153, 0.5)";
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      }
+  // Render hexagons
+  for (const cell of cells) {
+    if (!cell.polygon || cell.polygon.length !== 6) {
+      continue; // Skip invalid hexagons
     }
+    
+    // Get fill color
+    const { color, alpha } = getCellFillColor(cell, viewMode, territories, playerColors);
+    const rgb = hexToRgb(color);
+    
+    // Begin path and draw hexagon (always 6 vertices)
+    ctx.beginPath();
+    const firstPoint = cell.polygon[0];
+    const [firstX, firstY] = [
+      (firstPoint[0] + offsetX) * scale,
+      (firstPoint[1] + offsetY) * scale,
+    ];
+    ctx.moveTo(firstX, firstY);
+    
+    for (let i = 1; i < 6; i++) {
+      const [x, y] = [
+        (cell.polygon[i][0] + offsetX) * scale,
+        (cell.polygon[i][1] + offsetY) * scale,
+      ];
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    
+    // Fill hexagon
+    ctx.fillStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+    ctx.fill();
+    
+    // Draw stroke only for higher zoom levels
+    if (zoomLevel >= 2) {
+      ctx.strokeStyle = "rgba(153, 153, 153, 0.5)";
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    }
+  }
   
   // Return PNG buffer with high quality (compressionLevel: 0 = no compression, 9 = max compression)
   // Using level 6 for a balance between quality and file size

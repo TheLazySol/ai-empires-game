@@ -1,106 +1,70 @@
-import { Delaunay } from "d3-delaunay";
-import { VoronoiCell, TerrainType, MapData } from "@/types/game";
+import { HexCell, TerrainType, MapData } from "@/types/game";
 import { ResourceType } from "@/types/resources";
 import { 
   MAP_WIDTH, 
   MAP_HEIGHT, 
-  CELL_DENSITY_DIVISOR,
+  HEX_SIZE,
+  HEX_ORIENTATION,
   NUMBER_OF_CONTINENTS,
   NUMBER_OF_ISLANDS,
   LAND_VARIANCE,
   RESOURCE_SCARCITY
 } from "@/constants";
 
-// Poisson disc sampling for generating Voronoi sites
-function poissonDiscSampling(
-  width: number,
-  height: number,
-  minDistance: number,
-  maxAttempts: number = 30
-): [number, number][] {
-  const points: [number, number][] = [];
-  const active: [number, number][] = [];
-  const grid: (number | null)[] = [];
-  const cellSize = minDistance / Math.SQRT2;
-  const cols = Math.ceil(width / cellSize);
-  const rows = Math.ceil(height / cellSize);
+// Hexagon grid math for pointy-top hexagons
+const SQRT3 = Math.sqrt(3);
 
-  // Initialize grid
-  for (let i = 0; i < cols * rows; i++) {
-    grid[i] = null;
+/**
+ * Convert hex grid coordinates (row, col) to pixel coordinates
+ */
+function hexToPixel(row: number, col: number, hexSize: number): [number, number] {
+  const x = hexSize * SQRT3 * (col + (row % 2) * 0.5);
+  const y = hexSize * 1.5 * row;
+  return [x, y];
+}
+
+/**
+ * Generate hexagon vertices (6 points) for a pointy-top hexagon
+ */
+function generateHexagonVertices(centerX: number, centerY: number, hexSize: number): [number, number][] {
+  const vertices: [number, number][] = [];
+  // Pointy-top: start from top (0°), then 60° intervals
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i; // 60 degrees in radians
+    const x = centerX + hexSize * Math.sin(angle);
+    const y = centerY - hexSize * Math.cos(angle);
+    vertices.push([x, y]);
   }
+  return vertices;
+}
 
-  // Helper to get grid index
-  const getGridIndex = (x: number, y: number): number => {
-    const col = Math.floor(x / cellSize);
-    const row = Math.floor(y / cellSize);
-    return row * cols + col;
-  };
-
-  // Helper to check if point is valid
-  const isValid = (x: number, y: number): boolean => {
-    if (x < 0 || x >= width || y < 0 || y >= height) return false;
-
-    const col = Math.floor(x / cellSize);
-    const row = Math.floor(y / cellSize);
-    const startCol = Math.max(0, col - 2);
-    const endCol = Math.min(cols - 1, col + 2);
-    const startRow = Math.max(0, row - 2);
-    const endRow = Math.min(rows - 1, row + 2);
-
-    for (let r = startRow; r <= endRow; r++) {
-      for (let c = startCol; c <= endCol; c++) {
-        const idx = r * cols + c;
-        const neighborIdx = grid[idx];
-        if (neighborIdx !== null && typeof neighborIdx === 'number') {
-          const neighborPoint = points[neighborIdx];
-          if (neighborPoint) {
-            const dx = x - neighborPoint[0];
-            const dy = y - neighborPoint[1];
-            if (dx * dx + dy * dy < minDistance * minDistance) {
-              return false;
-            }
-          }
-        }
-      }
-    }
-    return true;
-  };
-
-  // Add first point
-  const firstX = width / 2;
-  const firstY = height / 2;
-  points.push([firstX, firstY]);
-  active.push([firstX, firstY]);
-  grid[getGridIndex(firstX, firstY)] = points.length - 1;
-
-  // Generate more points
-  while (active.length > 0) {
-    const randomIndex = Math.floor(Math.random() * active.length);
-    const point = active[randomIndex];
-    let found = false;
-
-    for (let i = 0; i < maxAttempts; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const distance = minDistance + Math.random() * minDistance;
-      const newX = point[0] + Math.cos(angle) * distance;
-      const newY = point[1] + Math.sin(angle) * distance;
-
-      if (isValid(newX, newY)) {
-        points.push([newX, newY]);
-        active.push([newX, newY]);
-        grid[getGridIndex(newX, newY)] = points.length - 1;
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) {
-      active.splice(randomIndex, 1);
-    }
+/**
+ * Get hexagon neighbors using offset coordinates
+ * For pointy-top hexagons in offset coordinates
+ */
+function getHexNeighbors(row: number, col: number): [number, number][] {
+  const isOddRow = row % 2 === 1;
+  if (isOddRow) {
+    // Odd rows
+    return [
+      [row - 1, col],     // Top
+      [row - 1, col + 1], // Top-right
+      [row, col + 1],     // Right
+      [row + 1, col + 1], // Bottom-right
+      [row + 1, col],     // Bottom
+      [row, col - 1],     // Left
+    ];
+  } else {
+    // Even rows
+    return [
+      [row - 1, col - 1], // Top-left
+      [row - 1, col],     // Top
+      [row, col + 1],     // Right
+      [row + 1, col],     // Bottom
+      [row + 1, col - 1], // Bottom-left
+      [row, col - 1],     // Left
+    ];
   }
-
-  return points;
 }
 
 // Simple 2D Perlin-like noise function
@@ -435,7 +399,7 @@ export function generateMap(
   seed: string, 
   width: number = MAP_WIDTH, 
   height: number = MAP_HEIGHT,
-  cellDensityDivisor: number = CELL_DENSITY_DIVISOR,
+  hexSize: number = HEX_SIZE,
   numContinents: number = NUMBER_OF_CONTINENTS,
   numIslands: number = NUMBER_OF_ISLANDS,
   landVariance: number = LAND_VARIANCE
@@ -465,128 +429,73 @@ export function generateMap(
     
     console.log(`Generated ${continents.length} continents and ${islands.length} islands`);
     
-    // Generate Voronoi sites using Poisson disc sampling
-    // Higher divisor = smaller cells (more cells)
-    const minDistance = Math.min(width, height) / cellDensityDivisor;
-    const sites = poissonDiscSampling(width, height, minDistance);
-
-    // Create Delaunay triangulation
-    const delaunay = Delaunay.from(sites);
-
-    // Create Voronoi diagram
-    const voronoi = delaunay.voronoi([0, 0, width, height]);
-
-    // Generate cells
-    const cells: VoronoiCell[] = [];
-    const neighborMap = new Map<string, Set<string>>();
-
-    sites.forEach((site, i) => {
-      try {
-        // Validate site exists and has coordinates
-        if (!site || !Array.isArray(site) || site.length < 2 || site[0] === undefined || site[1] === undefined) {
-          console.warn(`Skipping invalid site at index ${i}:`, site);
-          return;
+    // Generate hexagon grid
+    // Calculate grid dimensions
+    const hexWidth = hexSize * SQRT3;
+    const hexHeight = hexSize * 2;
+    
+    // Calculate number of hexagons needed to cover the map
+    const cols = Math.ceil(width / hexWidth) + 1;
+    const rows = Math.ceil(height / hexHeight) + 1;
+    
+    const cells: HexCell[] = [];
+    const cellMap = new Map<string, HexCell>(); // For neighbor lookup: "row,col" -> cell
+    
+    // Generate hexagons
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const [centerX, centerY] = hexToPixel(row, col, hexSize);
+        
+        // Skip hexagons that are completely outside the map bounds
+        if (centerX < -hexSize || centerX > width + hexSize || 
+            centerY < -hexSize || centerY > height + hexSize) {
+          continue;
         }
         
-        const id = `cell-${i}`;
-        const cellPath = voronoi.renderCell(i);
+        const id = `hex-${row}-${col}`;
+        const vertices = generateHexagonVertices(centerX, centerY, hexSize);
         
-        if (!cellPath) return;
-
-        // Parse SVG path string to extract polygon points
-        // Format: "M x1,y1 L x2,y2 L x3,y3 ... Z" or "M x1 y1 L x2 y2 ..."
-        const points: [number, number][] = [];
-        
-        // Remove M, L, Z commands and split by commas or spaces
-        const cleanedPath = cellPath
-          .replace(/[MLZ]/g, " ")
-          .replace(/,/g, " ")
-          .trim();
-        
-        const numbers = cleanedPath.match(/[\d.e-]+/g);
-        
-        if (numbers && numbers.length >= 2) {
-          for (let j = 0; j < numbers.length; j += 2) {
-            if (j + 1 < numbers.length) {
-              const x = parseFloat(numbers[j]);
-              const y = parseFloat(numbers[j + 1]);
-              if (!isNaN(x) && !isNaN(y)) {
-                points.push([x, y]);
-              }
-            }
-          }
-        }
-        
-        // Remove duplicate consecutive points
-        const uniquePoints: [number, number][] = [];
-        for (let j = 0; j < points.length; j++) {
-          const prev = uniquePoints[uniquePoints.length - 1];
-          const curr = points[j];
-          if (!prev || (prev[0] !== curr[0] || prev[1] !== curr[1])) {
-            uniquePoints.push(curr);
-          }
-        }
-        
-        // If parsing failed or we have too few points, create a simple square around the site
-        if (uniquePoints.length < 3) {
-          const size = minDistance * 0.5;
-          uniquePoints.length = 0;
-          uniquePoints.push(
-            [site[0] - size, site[1] - size],
-            [site[0] + size, site[1] - size],
-            [site[0] + size, site[1] + size],
-            [site[0] - size, site[1] + size]
-          );
-        }
-        
-        const finalPoints = uniquePoints;
-
-        const terrain = getTerrainType(site[0], site[1], continents, islands, landVariance);
+        // Determine terrain and resource based on center point
+        const terrain = getTerrainType(centerX, centerY, continents, islands, landVariance);
         const resource = terrain === TerrainType.Land 
-          ? assignResource(terrain, site[0], site[1], width, height)
+          ? assignResource(terrain, centerX, centerY, width, height)
           : undefined;
-
-        // Find neighbors
-        const neighbors: string[] = [];
-        const triangles = delaunay.neighbors(i);
-        // delaunay.neighbors() returns a Generator, convert to array
-        const triangleArray = triangles ? Array.from(triangles) : [];
-        for (const neighborIdx of triangleArray) {
-          if (neighborIdx !== undefined && neighborIdx !== null && neighborIdx !== -1) {
-            neighbors.push(`cell-${neighborIdx}`);
-          }
-        }
-
-        cells.push({
+        
+        // Create cell (neighbors will be set after all cells are created)
+        const cell: HexCell = {
           id,
-          site,
-          polygon: finalPoints,
-          neighbors,
+          site: [centerX, centerY],
+          polygon: vertices,
+          neighbors: [], // Will be populated below
           terrain,
           resource,
-        });
-
-        neighborMap.set(id, new Set(neighbors));
-      } catch (error) {
-        console.error(`Error processing site ${i}:`, error);
-        console.error(`Site value:`, site);
-        console.error(`Error stack:`, error instanceof Error ? error.stack : 'No stack');
-        throw error;
+        };
+        
+        cells.push(cell);
+        cellMap.set(`${row},${col}`, cell);
       }
-    });
-
-    // Ensure bidirectional neighbor relationships
-    cells.forEach((cell) => {
-      if (!cell || !cell.neighbors) return;
-      cell.neighbors.forEach((neighborId) => {
-        if (!neighborId) return;
-        const neighbor = cells.find((c) => c && c.id === neighborId);
-        if (neighbor && neighbor.neighbors && !neighbor.neighbors.includes(cell.id)) {
-          neighbor.neighbors.push(cell.id);
+    }
+    
+    // Set neighbors for each hexagon
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const cellKey = `${row},${col}`;
+        const cell = cellMap.get(cellKey);
+        if (!cell) continue;
+        
+        const neighborCoords = getHexNeighbors(row, col);
+        for (const [nRow, nCol] of neighborCoords) {
+          const neighborKey = `${nRow},${nCol}`;
+          const neighbor = cellMap.get(neighborKey);
+          if (neighbor) {
+            cell.neighbors.push(neighbor.id);
+          }
         }
-      });
-    });
-
+      }
+    }
+    
+    console.log(`Generated ${cells.length} hexagons`);
+    
     return {
       id: `map-${Date.now()}`,
       seed,
@@ -601,4 +510,3 @@ export function generateMap(
     Math.random = originalRandom;
   }
 }
-
