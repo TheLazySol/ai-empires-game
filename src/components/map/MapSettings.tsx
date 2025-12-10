@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import {
   MAP_WIDTH,
   MAP_HEIGHT,
@@ -99,6 +100,79 @@ export default function MapSettings({ open, onOpenChange }: MapSettingsProps) {
       });
     }
   }, [open]);
+
+  // Normalize tile types to sum to 1.0
+  const normalizeTileTypes = (
+    currentTileTypes: typeof tileTypes,
+    changedKey: string,
+    newValue: number
+  ): typeof tileTypes => {
+    const otherKeys = Object.keys(currentTileTypes).filter(k => k !== changedKey) as Array<keyof typeof currentTileTypes>;
+    const otherSum = otherKeys.reduce((sum, k) => sum + currentTileTypes[k], 0);
+    
+    if (otherSum === 0) {
+      // If all others are 0, distribute evenly
+      const newTileTypes = { ...currentTileTypes, [changedKey]: newValue } as typeof tileTypes;
+      const remaining = 1.0 - newValue;
+      const perOther = remaining / otherKeys.length;
+      otherKeys.forEach(k => {
+        (newTileTypes as any)[k] = perOther;
+      });
+      return newTileTypes;
+    }
+    
+    // Scale other values proportionally
+    const remaining = 1.0 - newValue;
+    const scale = remaining / otherSum;
+    const newTileTypes = { ...currentTileTypes, [changedKey]: newValue } as typeof tileTypes;
+    otherKeys.forEach(k => {
+      (newTileTypes as any)[k] = currentTileTypes[k] * scale;
+    });
+    
+    return newTileTypes;
+  };
+
+  // Normalize resource scarcity proportionally (target sum ≤ 1.0)
+  const normalizeResourceScarcity = (
+    currentScarcity: typeof resourceScarcity,
+    changedKey: string,
+    newValue: number
+  ): typeof resourceScarcity => {
+    const otherKeys = Object.keys(currentScarcity).filter(k => k !== changedKey) as Array<keyof typeof resourceScarcity>;
+    const otherSum = otherKeys.reduce((sum, k) => sum + currentScarcity[k], 0);
+    
+    if (otherSum === 0) {
+      // If all others are 0, keep new value as is
+      return { ...currentScarcity, [changedKey]: newValue };
+    }
+    
+    // If new total exceeds 1.0, scale others down proportionally
+    const newTotal = newValue + otherSum;
+    if (newTotal > 1.0) {
+      const remaining = 1.0 - newValue;
+      const scale = remaining / otherSum;
+      const newScarcity = { ...currentScarcity, [changedKey]: newValue } as typeof resourceScarcity;
+      otherKeys.forEach(k => {
+        (newScarcity as any)[k] = currentScarcity[k] * scale;
+      });
+      return newScarcity;
+    }
+    
+    // Otherwise, keep others as is
+    return { ...currentScarcity, [changedKey]: newValue };
+  };
+
+  const handleTileTypeChange = (key: string, value: number[]) => {
+    const newValue = value[0];
+    const normalized = normalizeTileTypes(tileTypes, key, newValue);
+    setTileTypes(normalized);
+  };
+
+  const handleResourceScarcityChange = (key: string, value: number[]) => {
+    const newValue = value[0];
+    const normalized = normalizeResourceScarcity(resourceScarcity, key, newValue);
+    setResourceScarcity(normalized);
+  };
 
   const handleGenerateMap = async () => {
     setIsLoading(true);
@@ -249,15 +323,18 @@ export default function MapSettings({ open, onOpenChange }: MapSettingsProps) {
                 <p className="text-xs text-gray-500">0.1-0.3: Smooth, 0.4-0.7: Natural, 0.8-1.5: Rough</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="landTilePercentage">Land Tile Percentage</Label>
-                <Input
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="landTilePercentage">Land Tile Percentage</Label>
+                  <span className="text-sm font-medium text-black">{(landTilePercentage * 100).toFixed(0)}%</span>
+                </div>
+                <Slider
                   id="landTilePercentage"
-                  type="number"
-                  value={landTilePercentage}
-                  onChange={(e) => setLandTilePercentage(Number(e.target.value))}
+                  value={[landTilePercentage]}
+                  onValueChange={(value) => setLandTilePercentage(value[0])}
                   min={0.1}
                   max={0.9}
-                  step={0.05}
+                  step={0.01}
+                  className="w-full"
                 />
                 <p className="text-xs text-gray-500">{(landTilePercentage * 100).toFixed(0)}% land, {((1 - landTilePercentage) * 100).toFixed(0)}% water</p>
               </div>
@@ -266,21 +343,29 @@ export default function MapSettings({ open, onOpenChange }: MapSettingsProps) {
 
           {/* Tile Types */}
           <div className="space-y-4">
-            <h3 className="text-sm font-semibold">Tile Type Distribution</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Tile Type Distribution</h3>
+              <span className="text-xs text-gray-500">
+                Total: {(Object.values(tileTypes).reduce((a, b) => a + b, 0) * 100).toFixed(1)}%
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               {Object.entries(tileTypes).map(([key, value]) => (
                 <div key={key} className="space-y-2">
-                  <Label htmlFor={`tile-${key}`}>{key.charAt(0) + key.slice(1).toLowerCase()}</Label>
-                  <Input
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor={`tile-${key}`}>{key.charAt(0) + key.slice(1).toLowerCase()}</Label>
+                    <span className="text-sm font-medium text-black">{(value * 100).toFixed(1)}%</span>
+                  </div>
+                  <Slider
                     id={`tile-${key}`}
-                    type="number"
-                    value={value}
-                    onChange={(e) => setTileTypes({ ...tileTypes, [key]: Number(e.target.value) })}
+                    value={[value]}
+                    onValueChange={(val) => handleTileTypeChange(key, val)}
                     min={0}
                     max={1}
                     step={0.01}
+                    className="w-full"
                   />
-                  <p className="text-xs text-gray-500">{(value * 100).toFixed(0)}% of land tiles</p>
+                  <p className="text-xs text-gray-500">of land tiles</p>
                 </div>
               ))}
             </div>
@@ -288,21 +373,29 @@ export default function MapSettings({ open, onOpenChange }: MapSettingsProps) {
 
           {/* Resource Scarcity */}
           <div className="space-y-4">
-            <h3 className="text-sm font-semibold">Resource Scarcity</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Resource Scarcity</h3>
+              <span className="text-xs text-gray-500">
+                Total: {(Object.values(resourceScarcity).reduce((a, b) => a + b, 0) * 100).toFixed(1)}%
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               {Object.entries(resourceScarcity).map(([key, value]) => (
                 <div key={key} className="space-y-2">
-                  <Label htmlFor={`resource-${key}`}>{key.charAt(0) + key.slice(1).toLowerCase()}</Label>
-                  <Input
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor={`resource-${key}`}>{key.charAt(0) + key.slice(1).toLowerCase()}</Label>
+                    <span className="text-sm font-medium text-black">{(value * 100).toFixed(1)}%</span>
+                  </div>
+                  <Slider
                     id={`resource-${key}`}
-                    type="number"
-                    value={value}
-                    onChange={(e) => setResourceScarcity({ ...resourceScarcity, [key]: Number(e.target.value) })}
+                    value={[value]}
+                    onValueChange={(val) => handleResourceScarcityChange(key, val)}
                     min={0}
                     max={1}
                     step={0.01}
+                    className="w-full"
                   />
-                  <p className="text-xs text-gray-500">{(value * 100).toFixed(0)}% of land cells</p>
+                  <p className="text-xs text-gray-500">of land cells</p>
                 </div>
               ))}
             </div>

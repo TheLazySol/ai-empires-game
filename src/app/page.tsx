@@ -7,6 +7,7 @@ import { useGameData } from "@/hooks/useGameData";
 import Map from "@/components/map/Map";
 import MapViewSelector from "@/components/map/MapViewSelector";
 import MapSettings from "@/components/map/MapSettings";
+import ResourcesPanel from "@/components/map/ResourcesPanel";
 import BottomPanel from "@/components/ui/BottomPanel";
 import PlayerSetup from "@/components/modals/PlayerSetup";
 import { Settings } from "lucide-react";
@@ -36,6 +37,7 @@ export default function Home() {
         <>
           <Map />
           <MapViewSelector />
+          <ResourcesPanel />
           <BottomPanel />
           {/* Settings button in top-right */}
           <Button

@@ -29,6 +29,9 @@ export interface HexCell {
   tileType?: TileType; // Tile type for land tiles (Plains, Woods, Mountains, Hills, Desert, Swamp)
   resource?: ResourceType;
   ownerId?: string; // Player ID who owns this cell
+  elevation?: number; // Elevation value for terrain generation (0-1 range)
+  row?: number; // Hex grid row coordinate
+  col?: number; // Hex grid column coordinate
 }
 
 export interface MapData {

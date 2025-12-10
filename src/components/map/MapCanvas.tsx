@@ -351,11 +351,21 @@ export default function MapCanvas({ onCellClick, onCellRightClick, onLoadingProg
 
     let tooltipText = "";
     
+    // Hex Coordinates
+    if (cell.row !== undefined && cell.col !== undefined) {
+      tooltipText += `Hex: (${cell.row}, ${cell.col})`;
+    }
+    
+    // Elevation
+    if (cell.elevation !== undefined) {
+      tooltipText += `\nElevation: ${cell.elevation.toFixed(3)}`;
+    }
+    
     // Tile Type (for land tiles)
     if (cell.terrain === TerrainType.Land && cell.tileType) {
-      tooltipText += `Tile Type: ${formatTileType(cell.tileType)}`;
+      tooltipText += `\nTile Type: ${formatTileType(cell.tileType)}`;
     } else {
-      tooltipText += `Terrain: ${cell.terrain === TerrainType.Water ? "Water" : "Land"}`;
+      tooltipText += `\nTerrain: ${cell.terrain === TerrainType.Water ? "Water" : "Land"}`;
     }
     
     // Resource Type

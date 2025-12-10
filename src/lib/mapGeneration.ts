@@ -271,24 +271,34 @@ function evaluateContinent(
   );
   
   // Base shape - falloff from center
-  const baseShape = Math.max(0, 1.0 - Math.pow(normalizedDist, 1.3));
+  // Higher variance creates more irregular falloff curves
+  const falloffPower = 1.3 - (variance * 0.3); // Range: 1.0 to 1.3
+  const baseShape = Math.max(0, 1.0 - Math.pow(normalizedDist, falloffPower));
   
   if (baseShape <= 0) return 0;
   
-  // Add noise for organic coastlines
+  // Add noise for organic coastlines with variance affecting shape variation
   const continentNoise = fbm(x, y, continent.seed, 3);
   const mediumNoise = fbm(x, y, continent.seed + 5000, 5);
   const detailNoise = fbm(x, y, continent.seed + 10000, 6);
   
+  // Variance affects the weight of different noise scales
+  const noiseWeight1 = 0.5 - (variance * 0.1); // Less weight on large-scale noise with high variance
+  const noiseWeight2 = 0.3 + (variance * 0.1); // More weight on medium-scale noise
+  const noiseWeight3 = 0.2 + (variance * 0.1); // More weight on detail noise
+  
   const combinedNoise = 
-    continentNoise * 0.5 + 
-    mediumNoise * 0.3 + 
-    detailNoise * 0.2;
+    continentNoise * noiseWeight1 + 
+    mediumNoise * noiseWeight2 + 
+    detailNoise * noiseWeight3;
   
-  // Apply variance to noise influence
-  const noiseInfluence = (combinedNoise - 0.5) * variance;
+  // Apply variance to noise influence - higher variance = more dramatic shape variation
+  const noiseInfluence = (combinedNoise - 0.5) * variance * 1.5;
   
-  return baseShape + noiseInfluence;
+  // Variance also affects the base shape's distortion
+  const shapeDistortion = variance * 0.2 * (combinedNoise - 0.5);
+  
+  return Math.max(0, Math.min(1, baseShape + noiseInfluence + shapeDistortion));
 }
 
 // Evaluate elevation for a single island
@@ -305,15 +315,21 @@ function evaluateIsland(
   const normalizedDist = dist / island.radius;
   
   // Island shape - smaller and more circular than continents
-  const baseShape = Math.max(0, 1.0 - Math.pow(normalizedDist, 2.0));
+  // Higher variance creates more irregular island shapes
+  const falloffPower = 2.0 - (variance * 0.4); // Range: 1.6 to 2.0
+  const baseShape = Math.max(0, 1.0 - Math.pow(normalizedDist, falloffPower));
   
   if (baseShape <= 0) return 0;
   
-  // Less noise for islands (they're smaller and simpler)
+  // Variance affects noise intensity for islands
   const islandNoise = fbm(x, y, island.seed, 4);
-  const noiseInfluence = (islandNoise - 0.5) * variance * 0.5;
+  const detailNoise = fbm(x, y, island.seed + 20000, 6);
   
-  return baseShape + noiseInfluence;
+  // Higher variance = more noise influence on island shape
+  const noiseInfluence = (islandNoise - 0.5) * variance * 0.6;
+  const detailInfluence = (detailNoise - 0.5) * variance * 0.3;
+  
+  return Math.max(0, Math.min(1, baseShape + noiseInfluence + detailInfluence));
 }
 
 // Calculate elevation for a point (used for terrain assignment)
@@ -519,29 +535,46 @@ export function generateMap(
     }
     
     // Sort cells by elevation (highest first)
+    // This ensures cells near continent/island centers (higher elevation) are selected first
+    // which naturally forms cohesive landmasses
     cellsWithElevation.sort((a, b) => b.elevation - a.elevation);
     
     // Assign land/water based on percentage
+    // Take the top N% of cells by elevation, which naturally groups into continents/islands
     const totalCells = cellsWithElevation.length;
     const landCellCount = Math.floor(totalCells * landTilePercentage);
     
+    // Debug: Check elevation distribution
+    const maxElevation = cellsWithElevation.length > 0 ? cellsWithElevation[0].elevation : 0;
+    const minElevation = cellsWithElevation.length > 0 ? cellsWithElevation[cellsWithElevation.length - 1].elevation : 0;
+    const cellsWithElevationAboveZero = cellsWithElevation.filter(c => c.elevation > 0).length;
+    console.log(`Map generation: ${totalCells} total cells, ${landCellCount} target land cells`);
+    console.log(`Elevation range: ${minElevation.toFixed(3)} to ${maxElevation.toFixed(3)}, ${cellsWithElevationAboveZero} cells with elevation > 0`);
+    
     // Assign terrain types
     for (let i = 0; i < totalCells; i++) {
+      const cellData = cellsWithElevation[i];
+      
+      // Store elevation, row, and col in cell for tooltip display
+      cellData.cell.elevation = cellData.elevation;
+      cellData.cell.row = cellData.row;
+      cellData.cell.col = cellData.col;
+      
       if (i < landCellCount) {
-        cellsWithElevation[i].cell.terrain = TerrainType.Land;
+        cellData.cell.terrain = TerrainType.Land;
         // Assign tile type to land cells
-        cellsWithElevation[i].cell.tileType = assignTileType(tileTypes);
+        cellData.cell.tileType = assignTileType(tileTypes);
         // Assign resources only to land cells
-        cellsWithElevation[i].cell.resource = assignResource(
+        cellData.cell.resource = assignResource(
           TerrainType.Land,
-          cellsWithElevation[i].cell.site[0],
-          cellsWithElevation[i].cell.site[1],
+          cellData.cell.site[0],
+          cellData.cell.site[1],
           width,
           height,
           resourceScarcity
         );
       } else {
-        cellsWithElevation[i].cell.terrain = TerrainType.Water;
+        cellData.cell.terrain = TerrainType.Water;
         // Water tiles don't get resources or tile types
       }
     }
@@ -559,7 +592,8 @@ export function generateMap(
       }
     });
     const totalLandCells = cells.filter(c => c.terrain === TerrainType.Land).length;
-    console.log(`Resource distribution: ${landCellsWithResources}/${totalLandCells} land cells have resources (${((landCellsWithResources / totalLandCells) * 100).toFixed(1)}%)`);
+    console.log(`Terrain assignment: ${totalLandCells} land cells created (target was ${landCellCount}, ${((totalLandCells / totalCells) * 100).toFixed(1)}% of total)`);
+    console.log(`Resource distribution: ${landCellsWithResources}/${totalLandCells} land cells have resources (${totalLandCells > 0 ? ((landCellsWithResources / totalLandCells) * 100).toFixed(1) : 0}%)`);
     resourceCounts.forEach((count, resource) => {
       console.log(`  ${resource}: ${count} cells (${((count / totalLandCells) * 100).toFixed(1)}% of land)`);
     });
